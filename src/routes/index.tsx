@@ -30,9 +30,10 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const PHONE = "0764026876";
 const WA = `https://wa.me/94764026876?text=${encodeURIComponent("Jnex POS free trial එකක් ගන්න කැමතියි")}`;
 const TEL = "tel:+94764026876";
+const PHONE_SHOW = "076 402 6876";
+const WA_INFO = `https://wa.me/94764026876?text=${encodeURIComponent("Jnex POS ගැන විස්තර දැනගන්න කැමතියි")}`;
 
 const btnGreen = "inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-success px-6 py-3 font-semibold text-success-foreground shadow-soft transition hover:brightness-105";
 const btnOutline = "inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-primary/30 bg-card px-6 py-3 font-semibold text-primary transition hover:bg-secondary";
@@ -181,12 +182,11 @@ function Index() {
             <p className="mt-5 inline-block rounded-full border border-gold px-4 py-1.5 text-sm font-medium text-navy">Rs 10,000 සිට · එක පාරක් ගෙවුවාම ජීවිතේටම · සීමිත පිරිසකට විතරයි</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <a href={WA} target="_blank" rel="noreferrer" className={btnGreen}>දවස් 3ක් free පාවිච්චි කරලා බලන්න</a>
-              <a href={TEL} className={btnOutline}><Phone className="h-4 w-4" />අපිට කතා කරන්න</a>
+              <a href={WA_INFO} target="_blank" rel="noreferrer" className={btnOutline}><Phone className="h-4 w-4" />අපිට කතා කරන්න</a>
             </div>
           </Reveal>
-          <Reveal className="relative">
-            <img src={hero.url} alt="කඩුවක් අතේ තියාගත්ත සාම්ප්‍රදායික වෙස් මුහුණු රණශූරයා" className="hero-fade w-full mix-blend-multiply" />
-            <Frame src={shotBilling.url} alt="Jnex POS බිල් ගහන තිරය" className="-mt-12 ml-auto w-[62%] sm:-mt-20" />
+          <Reveal className="flex justify-center">
+            <img src={hero.url} alt="කඩුවක් අතේ තියාගත්ත සාම්ප්‍රදායික වෙස් මුහුණු රණශූරයා" className="hero-mask hero-float max-h-[380px] w-full object-contain mix-blend-multiply md:max-h-[560px] md:w-[95%]" />
           </Reveal>
         </div>
       </section>
@@ -288,10 +288,11 @@ function Index() {
           <Reveal>
             <h2 className="text-2xl font-bold sm:text-4xl">මුලින්ම පාවිච්චි කරලා බලන්න. කැමති නම් විතරක් ගන්න.</h2>
             <div className="gold-divider mt-5" />
-            <p className="mt-5 text-lg text-navy-foreground/80">ඕනෑම කෙනෙකුට දවස් 3ක් free පාවිච්චි කරලා බලන්න පුළුවන්. ඊට පස්සේ ගන්න කැමති නම් Rs 10,000 සිට, එක පාරක් ගෙවුවාම ජීවිතේටම. මේක දෙන්නේ සීමිත පිරිසකට විතරයි.</p>
+            <p className="mt-5 text-lg text-navy-foreground/80">WhatsApp / කෝල්: <strong>{PHONE_SHOW}</strong></p>
+            <p className="mt-3 text-lg text-navy-foreground/80">ඕනෑම කෙනෙකුට දවස් 3ක් free පාවිච්චි කරලා බලන්න පුළුවන්. ඊට පස්සේ ගන්න කැමති නම් Rs 10,000 සිට, එක පාරක් ගෙවුවාම ජීවිතේටම. මේක දෙන්නේ සීමිත පිරිසකට විතරයි.</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <a href={WA} target="_blank" rel="noreferrer" className={btnGreen}><MessageCircle className="h-5 w-5" />WhatsApp එකෙන් free trial ගන්න</a>
-              <a href={TEL} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-navy-foreground/30 px-6 py-3 font-semibold hover:bg-navy-foreground/10"><Phone className="h-4 w-4" />{PHONE}</a>
+              <a href={TEL} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-navy-foreground/30 px-6 py-3 font-semibold hover:bg-navy-foreground/10"><Phone className="h-4 w-4" />{PHONE_SHOW}</a>
             </div>
           </Reveal>
           <Reveal className="hidden md:block">
@@ -326,13 +327,20 @@ function Index() {
           <div className="gold-divider mx-auto mt-4" />
           <p className="mt-5 text-lg text-muted-foreground">ඕන දෙයක් අහන්න, අපි උදව් කරන්නම්.</p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <a href={TEL} className={btnOutline}><Phone className="h-4 w-4" />{PHONE}</a>
-            <a href={WA} target="_blank" rel="noreferrer" className={btnGreen}><MessageCircle className="h-5 w-5" />WhatsApp</a>
+            <a href={TEL} className={btnOutline}><Phone className="h-4 w-4" />{PHONE_SHOW}</a>
+            <a href={WA} target="_blank" rel="noreferrer" className={btnGreen}><MessageCircle className="h-5 w-5" />WhatsApp: {PHONE_SHOW}</a>
           </div>
         </Reveal>
       </section>
 
-      <footer className="bg-navy py-6 text-center text-sm text-navy-foreground/70">© 2026 Jnex POS</footer>
+      <footer className="bg-navy pb-24 pt-6 text-center text-sm text-navy-foreground/70 sm:pb-6">
+        <a href={WA} target="_blank" rel="noreferrer" className="hover:text-navy-foreground">WhatsApp: {PHONE_SHOW}</a>
+        <p className="mt-1">© 2026 Jnex POS</p>
+      </footer>
+      <a href={WA} target="_blank" rel="noreferrer" aria-label="WhatsApp කරන්න" className="group fixed bottom-4 right-4 z-40 flex items-center gap-2">
+        <span className="hidden rounded-full bg-card px-3 py-1.5 text-sm font-medium text-navy opacity-0 shadow-soft transition group-hover:opacity-100 md:block">WhatsApp කරන්න</span>
+        <span className="grid h-14 w-14 place-items-center rounded-full bg-success text-success-foreground shadow-frame transition hover:brightness-105"><MessageCircle className="h-7 w-7" /></span>
+      </a>
     </div>
   );
 }
