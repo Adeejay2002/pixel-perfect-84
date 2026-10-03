@@ -79,6 +79,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { property: "og:type", content: "website" },
+      { property: "og:image", content: "/logo-icon.png" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
@@ -93,6 +94,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "icon", href: "/logo-icon.png", type: "image/png", sizes: "256x256" },
+      { rel: "apple-touch-icon", href: "/logo-icon.png" },
     ],
   }),
   shellComponent: RootShell,

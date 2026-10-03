@@ -4,6 +4,8 @@ import {
   WifiOff, Zap, Printer, KeyRound, ShoppingCart, Receipt, Package, Users,
   ShieldCheck, Palette, BarChart3, Check, Phone, MessageCircle, Menu, X, ChevronDown,
 } from "lucide-react";
+import logoMark from "@/assets/logo-mark.png";
+import logoMarkWhite from "@/assets/logo-mark-white.png";
 import hero from "@/assets/hero.jpg.asset.json";
 import laptop from "@/assets/laptop.jpg.asset.json";
 import shotReport from "@/assets/pos.jpg.asset.json";
@@ -154,7 +156,7 @@ function Index() {
       {/* Navbar */}
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
-          <a href="#top" className="text-lg font-bold text-primary">Jnex <span className="text-navy">POS</span></a>
+          <a href="#top" className="flex items-center gap-2.5 text-lg font-bold text-primary"><img src={logoMark} alt="Jnex Solution logo" className="h-9 w-auto" />Jnex <span className="text-navy">POS</span></a>
           <nav className="hidden items-center gap-7 md:flex">
             {nav.map(([l, h]) => <a key={h} href={h} className="text-sm font-medium text-navy/80 hover:text-primary">{l}</a>)}
           </nav>
@@ -333,7 +335,8 @@ function Index() {
         </Reveal>
       </section>
 
-      <footer className="bg-navy pb-24 pt-6 text-center text-sm text-navy-foreground/70 sm:pb-6">
+      <footer className="bg-navy pb-24 pt-8 text-center text-sm text-navy-foreground/70 sm:pb-6">
+        <img src={logoMarkWhite} alt="Jnex Solution" className="mx-auto mb-3 h-12 w-auto opacity-90" />
         <a href={WA} target="_blank" rel="noreferrer" className="hover:text-navy-foreground">WhatsApp: {PHONE_SHOW}</a>
         <p className="mt-1">© 2026 Jnex POS</p>
       </footer>
