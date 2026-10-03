@@ -110,3 +110,12 @@
 @utility hero-fade {
   mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black 55%, transparent 100%);
 }
+@utility hero-mask {
+  mask-image: linear-gradient(to right, transparent 0, black 10%, black 90%, transparent 100%), linear-gradient(to bottom, transparent 0, black 10%, black 78%, transparent 100%);
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 10%, black 90%, transparent 100%), linear-gradient(to bottom, transparent 0, black 10%, black 78%, transparent 100%);
+}
+@keyframes hero-float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-6px) } }
+@utility hero-float { animation: hero-float 6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .hero-float { animation: none; } }
