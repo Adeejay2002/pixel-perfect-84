@@ -6,28 +6,87 @@ import {
 } from "lucide-react";
 import logoMark from "@/assets/logo-mark.png";
 import logoMarkWhite from "@/assets/logo-mark-white.png";
-import hero from "@/assets/hero.jpg.asset.json";
-import laptop from "@/assets/laptop.jpg.asset.json";
-import shotReport from "@/assets/pos.jpg.asset.json";
-import shotHistory from "@/assets/pos1.jpg.asset.json";
-import shotMenu from "@/assets/pos2.jpg.asset.json";
-import shotReceipt from "@/assets/pos3.jpg.asset.json";
-import shotBilling from "@/assets/pos4.jpg.asset.json";
-import shotLock from "@/assets/pos5.jpg.asset.json";
+import {
+  hero, laptop, pos as shotReport, pos1 as shotHistory, pos2 as shotMenu,
+  pos3 as shotReceipt, pos4 as shotBilling, pos5 as shotLock,
+} from "@/lib/images";
 
-const TITLE = "Jnex POS — කඩේ බිල් ගහන එක ලේසි කරගමු";
-const DESC = "Internet නැතුවත් වැඩ කරන Windows POS system එකක්. බිල් ගහන්න, stock බලන්න, ණය ලියාගන්න. දවස් 3ක් free.";
+const SITE = "https://jnex.com.lk";
+const TITLE = "POS System Sri Lanka | Jnex POS — Offline Billing Software";
+const DESC = "Jnex POS — ශ්‍රී ලංකාවේ කඩ සඳහා Internet නැතුවත් වැඩ කරන POS system / billing software. බිල් ගහන්න, stock බලන්න, ණය ලියාගන්න. Rs 10,000 සිට, දවස් 3ක් free.";
+const OG_IMG = `${SITE}/og-image.png`;
+const PHONE_E164 = "+94764026876";
+
+const faqsForSchema: [string, string][] = [
+  ["Internet නැතුවත් වැඩ කරනවාද?", "ඔව්. Data ඔක්කොම ඔයාගේ computer එකේම save වෙනවා. Connection එකක් නැතුවත් බිල් ගහන්න පුළුවන්."],
+  ["මොන printer එකද පාවිච්චි කරන්න පුළුවන්?", "XP-80T වගේ Thermal printer එකක් නම් හරි. 80mm, 58mm දෙකම තෝරගන්න පුළුවන්."],
+  ["Free trial එක කාටද?", "කාටත් පුළුවන්. දවස් 3ක් සම්පූර්ණ system එක පාවිච්චි කරලා බලන්න."],
+  ["Rs 10,000 කියන්නේ ජීවිතේටම ද?", "ඔව්, Rs 10,000 සිට පටන් ගන්නවා. එක පාරක් ගෙවනවා, මාසික ගාස්තුවක් නෑ."],
+];
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE}/#org`,
+      name: "Jnex Solution",
+      url: SITE,
+      logo: `${SITE}/icon-512.png`,
+      areaServed: { "@type": "Country", name: "Sri Lanka" },
+      contactPoint: [{ "@type": "ContactPoint", telephone: PHONE_E164, contactType: "sales", areaServed: "LK", availableLanguage: ["si", "en", "ta"] }],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE}/#website`,
+      url: SITE,
+      name: "Jnex POS",
+      inLanguage: "si-LK",
+      publisher: { "@id": `${SITE}/#org` },
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${SITE}/#app`,
+      name: "Jnex POS",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Windows",
+      description: DESC,
+      url: SITE,
+      image: OG_IMG,
+      inLanguage: "si-LK",
+      publisher: { "@id": `${SITE}/#org` },
+      offers: { "@type": "Offer", price: "10000", priceCurrency: "LKR", availability: "https://schema.org/InStock", url: SITE },
+    },
+    {
+      "@type": "FAQPage",
+      mainEntity: faqsForSchema.map(([q, a]) => ({ "@type": "Question", name: q, acceptedAnswer: { "@type": "Answer", text: a } })),
+    },
+  ],
+};
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: TITLE },
       { name: "description", content: DESC },
+      { name: "keywords", content: "POS system Sri Lanka, POS software Sri Lanka, billing software Sri Lanka, offline POS, supermarket POS, shop billing system, thermal printer POS, Jnex POS, POS එක, බිල් ගහන software" },
+      { name: "robots", content: "index, follow, max-image-preview:large, max-snippet:-1" },
       { property: "og:title", content: TITLE },
       { property: "og:description", content: DESC },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
+      { property: "og:url", content: `${SITE}/` },
+      { property: "og:image", content: OG_IMG },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      { property: "og:image:alt", content: "Jnex POS — POS system for shops in Sri Lanka" },
+      { name: "twitter:title", content: TITLE },
+      { name: "twitter:description", content: DESC },
+      { name: "twitter:image", content: OG_IMG },
     ],
+    links: [
+      { rel: "canonical", href: `${SITE}/` },
+      { rel: "preload", as: "image", href: hero.url, type: "image/webp" },
+    ],
+    scripts: [{ type: "application/ld+json", children: JSON.stringify(jsonLd) }],
   }),
   component: Index,
 });
@@ -179,6 +238,7 @@ function Index() {
       <section id="top" className="circuit-bg">
         <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-10 md:grid-cols-2 md:pt-16">
           <Reveal>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-primary">Jnex POS · POS System Sri Lanka</p>
             <h1 className="text-3xl font-bold text-navy sm:text-5xl">කඩේ බිල් ගහන එක <span className="text-primary">ලේසි කරගමු</span></h1>
             <p className="mt-5 text-lg text-muted-foreground">Internet නැතත් ප්‍රශ්නයක් නෑ. බිල් ගහන්න, stock බලන්න, ණය ලියාගන්න — හැමදේම ඔයාගේ computer එකෙන්ම.</p>
             <p className="mt-5 inline-block rounded-full border border-gold px-4 py-1.5 text-sm font-medium text-navy">Rs 10,000 සිට · එක පාරක් ගෙවුවාම ජීවිතේටම · සීමිත පිරිසකට විතරයි</p>
@@ -338,7 +398,7 @@ function Index() {
       <footer className="bg-navy pb-24 pt-8 text-center text-sm text-navy-foreground/70 sm:pb-6">
         <img src={logoMarkWhite} alt="Jnex Solution" className="mx-auto mb-3 h-12 w-auto opacity-90" />
         <a href={WA} target="_blank" rel="noreferrer" className="hover:text-navy-foreground">WhatsApp: {PHONE_SHOW}</a>
-        <p className="mt-1">© 2026 Jnex POS</p>
+        <p className="mt-1">© 2026 Jnex Solution · Jnex POS — POS system Sri Lanka</p>
       </footer>
       <a href={WA} target="_blank" rel="noreferrer" aria-label="WhatsApp කරන්න" className="group fixed bottom-4 right-4 z-40 flex items-center gap-2">
         <span className="hidden rounded-full bg-card px-3 py-1.5 text-sm font-medium text-navy opacity-0 shadow-soft transition group-hover:opacity-100 md:block">WhatsApp කරන්න</span>
