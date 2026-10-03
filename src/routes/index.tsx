@@ -186,7 +186,7 @@ function Index() {
           </Reveal>
           <Reveal className="relative">
             <img src={hero.url} alt="කඩුවක් අතේ තියාගත්ත සාම්ප්‍රදායික වෙස් මුහුණු රණශූරයා" className="hero-fade w-full mix-blend-multiply" />
-            <Frame src={shotBilling.url} alt="Jnex POS බිල් ගහන තිරය" className="-mt-16 ml-auto w-[80%] sm:-mt-24" />
+            <Frame src={shotBilling.url} alt="Jnex POS බිල් ගහන තිරය" className="-mt-12 ml-auto w-[62%] sm:-mt-20" />
           </Reveal>
         </div>
       </section>
