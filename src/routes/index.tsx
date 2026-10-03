@@ -276,8 +276,8 @@ function Index() {
         <div role="dialog" aria-modal className="fixed inset-0 z-50 grid place-items-center bg-navy/90 p-4" onClick={() => setLightbox(null)}>
           <button aria-label="වහන්න" className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-card text-navy"><X /></button>
           <figure className="max-h-full max-w-5xl" onClick={(e) => e.stopPropagation()}>
-            <img src={gallery[lightbox].src} alt={gallery[lightbox].cap} className="max-h-[80vh] w-auto rounded-xl" />
-            <figcaption className="mt-3 text-center text-navy-foreground">{gallery[lightbox].cap}</figcaption>
+            <img src={gallery[lightbox]!.src} alt={gallery[lightbox]!.cap} className="max-h-[80vh] w-auto rounded-xl" />
+            <figcaption className="mt-3 text-center text-navy-foreground">{gallery[lightbox]!.cap}</figcaption>
           </figure>
         </div>
       )}
