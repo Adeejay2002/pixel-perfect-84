@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 
 // Files live in /public/downloads/ (served from the site root as /downloads/...)
-export const SETUP_URL = "/downloads/Jnex-POS-Setup.exe";
+export const SETUP_URL = "https://github.com/Adeejay2002/pixel-perfect-84/releases/latest/download/Jnex-POS-Setup.exe";
 export const SETUP_NAME = "Jnex-POS-Setup.exe";
 export const GUIDE_URL = "/downloads/Jnex-POS-User-Guide-Sinhala.pdf";
 export const GUIDE_NAME = "Jnex-POS-User-Guide-Sinhala.pdf";
