@@ -2,8 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   WifiOff, Zap, Printer, KeyRound, ShoppingCart, Receipt, Package, Users,
-  ShieldCheck, Palette, BarChart3, Check, Phone, MessageCircle, Menu, X, ChevronDown,
+  ShieldCheck, Palette, BarChart3, Check, Phone, MessageCircle, Menu, X, ChevronDown, Download,
 } from "lucide-react";
+import { TrialDownloadDialog } from "@/components/TrialDownloadDialog";
 import logoMark from "@/assets/logo-mark.png";
 import logoMarkWhite from "@/assets/logo-mark-white.png";
 import {
@@ -189,6 +190,7 @@ function SectionHead({ title, sub }: { title: string; sub?: string }) {
 
 function Index() {
   const [open, setOpen] = useState(false);
+  const [trialOpen, setTrialOpen] = useState(false);
   const [lightbox, setLightbox] = useState<number | null>(null);
 
   useEffect(() => {
@@ -220,7 +222,7 @@ function Index() {
             {nav.map(([l, h]) => <a key={h} href={h} className="text-sm font-medium text-navy/80 hover:text-primary">{l}</a>)}
           </nav>
           <div className="flex items-center gap-2">
-            <a href={WA} target="_blank" rel="noreferrer" className={`${btnGreen} hidden min-h-10 px-4 py-2 text-sm sm:inline-flex`}>දවස් 3ක් free</a>
+            <button type="button" onClick={() => setTrialOpen(true)} className={`${btnGreen} hidden min-h-10 px-4 py-2 text-sm sm:inline-flex`}>දවස් 3ක් free</button>
             <button aria-label="මෙනුව" onClick={() => setOpen(!open)} className="grid h-11 w-11 place-items-center rounded-full text-navy md:hidden">
               {open ? <X /> : <Menu />}
             </button>
@@ -229,10 +231,12 @@ function Index() {
         {open && (
           <nav className="border-t border-border bg-background px-4 pb-4 md:hidden">
             {nav.map(([l, h]) => <a key={h} href={h} onClick={() => setOpen(false)} className="block py-3 font-medium text-navy">{l}</a>)}
-            <a href={WA} target="_blank" rel="noreferrer" className={`${btnGreen} mt-2 w-full`}>දවස් 3ක් free</a>
+            <button type="button" onClick={() => { setOpen(false); setTrialOpen(true); }} className={`${btnGreen} mt-2 w-full`}>දවස් 3ක් free</button>
           </nav>
         )}
       </header>
+
+      <TrialDownloadDialog open={trialOpen} onOpenChange={setTrialOpen} />
 
       {/* Hero */}
       <section id="top" className="circuit-bg">
@@ -243,7 +247,7 @@ function Index() {
             <p className="mt-5 text-lg text-muted-foreground">Internet නැතත් ප්‍රශ්නයක් නෑ. බිල් ගහන්න, stock බලන්න, ණය ලියාගන්න — හැමදේම ඔයාගේ computer එකෙන්ම.</p>
             <p className="mt-5 inline-block rounded-full border border-gold px-4 py-1.5 text-sm font-medium text-navy">Rs 10,000 සිට · එක පාරක් ගෙවුවාම ජීවිතේටම · සීමිත පිරිසකට විතරයි</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <a href={WA} target="_blank" rel="noreferrer" className={btnGreen}>දවස් 3ක් free පාවිච්චි කරලා බලන්න</a>
+              <button type="button" onClick={() => setTrialOpen(true)} className={btnGreen}>දවස් 3ක් free පාවිච්චි කරලා බලන්න</button>
               <a href={WA_INFO} target="_blank" rel="noreferrer" className={btnOutline}><Phone className="h-4 w-4" />අපිට කතා කරන්න</a>
             </div>
           </Reveal>
@@ -353,7 +357,7 @@ function Index() {
             <p className="mt-5 text-lg text-navy-foreground/80">WhatsApp / කෝල්: <strong>{PHONE_SHOW}</strong></p>
             <p className="mt-3 text-lg text-navy-foreground/80">ඕනෑම කෙනෙකුට දවස් 3ක් free පාවිච්චි කරලා බලන්න පුළුවන්. ඊට පස්සේ ගන්න කැමති නම් Rs 10,000 සිට, එක පාරක් ගෙවුවාම ජීවිතේටම. මේක දෙන්නේ සීමිත පිරිසකට විතරයි.</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <a href={WA} target="_blank" rel="noreferrer" className={btnGreen}><MessageCircle className="h-5 w-5" />WhatsApp එකෙන් free trial ගන්න</a>
+              <button type="button" onClick={() => setTrialOpen(true)} className={btnGreen}><Download className="h-5 w-5" />Free trial එක ගන්න</button>
               <a href={TEL} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-navy-foreground/30 px-6 py-3 font-semibold hover:bg-navy-foreground/10"><Phone className="h-4 w-4" />{PHONE_SHOW}</a>
             </div>
           </Reveal>
