@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Receipt printer settings</title>
+<style>
+  body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #1e1e1e;
+    color: #eee;
+    padding: 20px;
+  }
+  h1 { font-size: 15px; margin: 0 0 14px; }
+  label { display: block; font-size: 12px; color: #aaa; margin: 14px 0 6px; }
+  select, button {
+    width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: #2a2a2a;
+    color: #eee;
+    font-size: 13px;
+  }
+  button {
+    margin-top: 20px;
+    background: #22c55e;
+    color: #000;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+  }
+  button:hover { background: #16a34a; }
+  #status { font-size: 11px; color: #22c55e; margin-top: 10px; min-height: 14px; }
+  .hint { font-size: 11px; color: #777; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>Receipt printer (XP-80T etc.)</h1>
+
+  <label for="printer">Windows printer</label>
+  <select id="printer"></select>
+  <p class="hint">Install the XP-80T driver first so it shows up here as a normal Windows printer.</p>
+
+  <label for="width">Paper width</label>
+  <select id="width">
+    <option value="80">80mm (XP-80T)</option>
+    <option value="58">58mm</option>
+  </select>
+
+  <button id="save">Save</button>
+  <div id="status"></div>
+
+  <script>
+    async function init() {
+      const printers = await window.settingsAPI.listPrinters();
+      const cfg = await window.settingsAPI.getConfig();
+
+      const printerSel = document.getElementById("printer");
+      const defaultOpt = document.createElement("option");
+      defaultOpt.value = "";
+      defaultOpt.textContent = "System default printer";
+      printerSel.appendChild(defaultOpt);
+
+      for (const p of printers) {
+        const opt = document.createElement("option");
+        opt.value = p.name;
+        opt.textContent = p.displayName || p.name;
+        printerSel.appendChild(opt);
+      }
+      printerSel.value = cfg.deviceName || "";
+      document.getElementById("width").value = String(cfg.paperWidthMm || 80);
+    }
+
+    document.getElementById("save").addEventListener("click", async () => {
+      const deviceName = document.getElementById("printer").value;
+      const paperWidthMm = Number(document.getElementById("width").value);
+      await window.settingsAPI.setConfig({ deviceName, paperWidthMm });
+      const status = document.getElementById("status");
+      status.textContent = "Saved.";
+      setTimeout(() => (status.textContent = ""), 2000);
+    });
+
+    init();
+  </script>
+</body>
+</html>
