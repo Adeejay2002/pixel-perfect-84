@@ -216,6 +216,8 @@ export function PosProvider({ children }) {
   // ---- cart --------------------------------------------------------------
   // The line the numpad edits. Falls back to the newest non-void line (see selectedLine).
   const [selectedLineId, setSelectedLineId] = useState(null);
+  // line whose quantity is being typed on the numpad popup (null = popup closed)
+  const [qtyEditId, setQtyEditId] = useState(null);
   const linesRef = useRef([]);
   linesRef.current = lines;
 
@@ -862,6 +864,8 @@ export function PosProvider({ children }) {
     setLineQty,
     selectedLine,
     setSelectedLineId,
+    qtyEditId,
+    setQtyEditId,
     clearCart,
     totals,
     billDiscountOn,

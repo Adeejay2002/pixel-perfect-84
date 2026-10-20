@@ -1,5 +1,4 @@
-import { useRef } from "react";
-import { Lock, Minus, Plus, Trash2, Percent, User, Delete } from "lucide-react";
+import { Lock, Minus, Plus, Trash2, Percent, User } from "lucide-react";
 import { usePos, money } from "../../lib/pos/store";
 
 export default function TicketPanel() {
@@ -22,26 +21,6 @@ export default function TicketPanel() {
     setSelectedLineId,
   } = usePos();
   const c = settings.currency;
-  // what the numpad has typed so far for the selected line
-  const typedRef = useRef({ id: null, text: "" });
-
-  // Numpad: digits go straight into the selected line's quantity (no Apply button).
-  // The first digit replaces the quantity; further digits append, as long as the
-  // quantity is still what was typed (clicking the item or +/- starts fresh).
-  const pressKey = (k) => {
-    if (!selectedLine) return;
-    const t = typedRef.current;
-    const continuing =
-      t.id === selectedLine.id && t.text !== "" && parseInt(t.text, 10) === selectedLine.qty;
-    let text = continuing ? t.text : "";
-    if (k === "del") text = text.slice(0, -1);
-    else if (k === "C") text = "";
-    else text = (text + k).replace(/^0+/, "").slice(0, 4);
-    typedRef.current = { id: selectedLine.id, text };
-    if (text !== "") setLineQty(selectedLine.id, parseInt(text, 10));
-    else if (k === "C") setLineQty(selectedLine.id, 1);
-  };
-
   return (
     <aside className="flex w-[35%] min-w-[340px] flex-col border-l border-pos-border bg-pos-panel">
       <div className="flex items-center justify-between border-b border-pos-border px-3 py-2.5">
@@ -131,7 +110,19 @@ export default function TicketPanel() {
                 >
                   <Minus size={12} />
                 </button>
-                <span className="w-6 text-center text-sm font-bold text-foreground">{l.qty}</span>
+                <button
+                  type="button"
+                  title="Tap to type quantity"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (l.status === "void") return;
+                    setSelectedLineId(l.id);
+                    setQtyEditId(l.id);
+                  }}
+                  className="h-6 min-w-8 rounded bg-pos-tile px-1 text-center text-sm font-bold text-foreground hover:bg-pos-hover"
+                >
+                  {l.qty}
+                </button>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -157,25 +148,6 @@ export default function TicketPanel() {
             </div>
           );
         })}
-      </div>
-
-      <div className="border-t border-pos-border p-2">
-        <p className="mb-1 truncate px-1 text-[10px] uppercase text-muted-foreground">
-          Qty · {selectedLine ? `${selectedLine.name} × ${selectedLine.qty}` : "select an item"}
-        </p>
-        <div className="grid grid-cols-4 gap-1">
-          {["7", "8", "9", "del", "4", "5", "6", "C", "1", "2", "3", "0"].map((k) => (
-            <button
-              key={k}
-              type="button"
-              disabled={!selectedLine}
-              onClick={() => pressKey(k)}
-              className="h-9 rounded bg-pos-tile text-sm font-semibold text-foreground hover:bg-pos-hover disabled:opacity-40"
-            >
-              {k === "del" ? <Delete className="mx-auto" size={15} /> : k}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="border-t border-pos-border px-4 py-3 text-sm">
