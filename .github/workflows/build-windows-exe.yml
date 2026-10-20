@@ -2,42 +2,72 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch: {}
 
 jobs:
   build:
     runs-on: windows-latest
-    
-    # Release එකක් create කරන්න අවශ්‍ය permissions
+    timeout-minutes: 30
+
+    # needed to create the GitHub Release
     permissions:
-      contents: write 
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      # no code-signing certificate: stop electron-builder searching for one
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # never let electron-builder try to publish by itself
+      GH_TOKEN: ""
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # vite 8 needs Node >= 20.19 / 22.12
+          node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
+      # Electron needs the node-server build (not the default cloudflare one):
+      # electron/main.cjs starts resources/output/server/index.mjs
       - name: Build web app (vite + nitro node-server)
         run: npm run build
         env:
           NITRO_PRESET: node-server
 
+      - name: Check server build exists
+        run: |
+          ls -la .output .output/server
+          test -f .output/server/index.mjs || { echo "::error::.output/server/index.mjs missing - build used the wrong nitro preset"; exit 1; }
+
       - name: Package Windows installer (.exe)
         run: npx electron-builder --win --publish=never
 
-      # Artifact එකක් විදිහට නැතුව Release එකක් විදිහට upload කිරීම
+      - name: List build output
+        run: ls -la dist
+
+      # always keep a downloadable copy on the run page
+      - name: Upload installer as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jnex-pos-windows-installer
+          path: dist/*.exe
+          if-no-files-found: error
+
       - name: Upload EXE to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev-build-${{ github.run_number }}
           name: "Development Build #${{ github.run_number }}"
           files: dist/*.exe
-          draft: true # Draft එකක් විදිහට සේව් වෙන නිසා පස්සේ ලේසියෙන්ම download කරගන්න පුළුවන්
+          draft: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
