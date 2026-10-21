@@ -7,7 +7,6 @@ import ProductWorkspace from "./ProductWorkspace";
 import TicketPanel from "./TicketPanel";
 import PaymentModal from "./PaymentModal";
 import HeldSalesModal from "./HeldSalesModal";
-import QuantityModal from "./QuantityModal";
 import MenuDrawer from "./MenuDrawer";
 import Modules from "./Modules";
 import ReceiptModal from "./Receipt";
@@ -121,7 +120,6 @@ function Workspace() {
       </div>
       <PaymentModal open={payment} onClose={() => setPayment(false)} />
       <HeldSalesModal open={held} onClose={() => setHeld(false)} />
-      <QuantityModal />
       <MenuDrawer open={menu} onClose={() => setMenu(false)} onSelect={setModule} />
       <Modules active={module} onClose={() => setModule(null)} onOpenReceipt={setReceipt} />
       {receipt && <ReceiptModal sale={receipt} onClose={() => setReceipt(null)} />}

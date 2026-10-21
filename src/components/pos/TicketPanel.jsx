@@ -1,4 +1,5 @@
-import { Lock, Minus, Plus, Trash2, Percent, User } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Lock, Minus, Plus, Trash2, Percent, User, Delete } from "lucide-react";
 import { usePos, money } from "../../lib/pos/store";
 
 export default function TicketPanel() {
@@ -19,10 +20,77 @@ export default function TicketPanel() {
     toggleBillDiscount,
     selectedLine,
     setSelectedLineId,
+    qtyEditId,
+    setQtyEditId,
   } = usePos();
   const c = settings.currency;
+  // The line being edited on the numpad popup (opened by triple-clicking an item, or F4)
+  const editLine = lines.find((l) => l.id === qtyEditId && l.status !== "void") || null;
+  // what the numpad has typed so far for that line
+  const typedRef = useRef({ id: null, text: "" });
+  // The popup closes by itself after 3 seconds without a key press; every press
+  // bumps `tick`, which restarts the timer (so multi-digit quantities still work).
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!qtyEditId) return undefined;
+    const t = setTimeout(() => setQtyEditId(null), 3000);
+    return () => clearTimeout(t);
+  }, [qtyEditId, tick, setQtyEditId]);
+  useEffect(() => {
+    typedRef.current = { id: null, text: "" };
+  }, [qtyEditId]);
+
+  // Digits go straight into the line's quantity (shown live in its qty box, no Apply
+  // button). The first digit replaces the quantity; further digits append while the
+  // quantity is still what was typed.
+  const pressKey = (k) => {
+    if (!editLine) return;
+    setTick((n) => n + 1);
+    const t = typedRef.current;
+    const continuing =
+      t.id === editLine.id && t.text !== "" && parseInt(t.text, 10) === editLine.qty;
+    let text = continuing ? t.text : "";
+    if (k === "inc" || k === "dec") {
+      typedRef.current = { id: editLine.id, text: "" };
+      setLineQty(editLine.id, Math.max(1, editLine.qty + (k === "inc" ? 1 : -1)));
+      return;
+    }
+    if (k === "del") text = (continuing ? t.text : String(editLine.qty)).slice(0, -1);
+    else if (k === "C") text = "";
+    else text = (text + k).replace(/^0+/, "").slice(0, 4);
+    typedRef.current = { id: editLine.id, text };
+    setLineQty(editLine.id, text !== "" ? parseInt(text, 10) : 1);
+  };
+  const pressKeyRef = useRef(pressKey);
+  pressKeyRef.current = pressKey;
+
+  // physical keyboard / numpad also types into the open popup
+  useEffect(() => {
+    if (!qtyEditId) return undefined;
+    const onKey = (e) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      // numpad keys by physical code, so they work with NumLock on or off
+      const digit =
+        /^(?:Numpad|Digit)([0-9])$/.exec(e.code)?.[1] ?? (/^[0-9]$/.test(e.key) ? e.key : null);
+      const act = (fn) => {
+        e.preventDefault();
+        e.stopPropagation();
+        fn();
+      };
+      if (digit !== null) act(() => pressKeyRef.current(digit));
+      else if (e.key === "Backspace") act(() => pressKeyRef.current("del"));
+      else if (e.key === "Delete" || e.code === "NumpadDecimal")
+        act(() => pressKeyRef.current("C"));
+      else if (e.key === "+" || e.code === "NumpadAdd") act(() => pressKeyRef.current("inc"));
+      else if (e.key === "-" || e.code === "NumpadSubtract") act(() => pressKeyRef.current("dec"));
+      else if (e.key === "Enter") act(() => setQtyEditId(null));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [qtyEditId, setQtyEditId]);
+
   return (
-    <aside className="flex w-[35%] min-w-[340px] flex-col border-l border-pos-border bg-pos-panel">
+    <aside className="relative flex w-[35%] min-w-[340px] flex-col border-l border-pos-border bg-pos-panel">
       <div className="flex items-center justify-between border-b border-pos-border px-3 py-2.5">
         <span className="text-sm font-semibold text-foreground">Sale #{saleNo}</span>
         <span className="text-[11px] text-muted-foreground">{new Date().toLocaleDateString()}</span>
@@ -54,14 +122,18 @@ export default function TicketPanel() {
           return (
             <div
               key={l.id}
-              onClick={() => {
+              onClick={(e) => {
                 if (l.status === "void") return;
                 setSelectedLineId(l.id);
-                setLineQty(l.id, l.qty + 1);
+                // triple click opens the quantity numpad for this item
+                if (e.detail >= 3) setQtyEditId(l.id);
+                else if (qtyEditId && qtyEditId !== l.id) setQtyEditId(null);
               }}
-              className={`flex cursor-pointer items-start gap-2 border-b border-pos-border px-3 py-2 ${
+              className={`flex cursor-pointer select-none items-start gap-2 border-b border-pos-border px-3 py-2 ${
                 l.status === "void" ? "opacity-60" : ""
-              } ${selectedLine?.id === l.id ? "bg-pos-hover" : ""}`}
+              } ${selectedLine?.id === l.id ? "bg-pos-hover" : ""} ${
+                qtyEditId === l.id ? "ring-2 ring-inset ring-pos-blue" : ""
+              }`}
             >
               <button
                 type="button"
@@ -110,19 +182,15 @@ export default function TicketPanel() {
                 >
                   <Minus size={12} />
                 </button>
-                <button
-                  type="button"
-                  title="Tap to type quantity"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (l.status === "void") return;
-                    setSelectedLineId(l.id);
-                    setQtyEditId(l.id);
-                  }}
-                  className="h-6 min-w-8 rounded bg-pos-tile px-1 text-center text-sm font-bold text-foreground hover:bg-pos-hover"
+                <span
+                  className={`flex h-6 min-w-8 items-center justify-center rounded px-1 text-center text-sm font-bold ${
+                    qtyEditId === l.id
+                      ? "bg-pos-blue text-white ring-2 ring-pos-blue/50"
+                      : "bg-pos-tile text-foreground"
+                  }`}
                 >
                   {l.qty}
-                </button>
+                </span>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -211,6 +279,37 @@ export default function TicketPanel() {
           <Lock size={13} /> Lock
         </button>
       </div>
+      {editLine && (
+        <div className="absolute inset-x-0 bottom-0 z-20 border-t-2 border-pos-blue bg-pos-panel p-3 shadow-2xl">
+          {/* 3-second countdown bar, restarts on every key press */}
+          <div key={tick} className="pos-qty-timer absolute inset-x-0 top-0 h-0.5 bg-pos-blue" />
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="truncate text-sm font-semibold text-foreground">{editLine.name}</span>
+            <span className="rounded bg-pos-tile px-3 py-1 font-mono text-xl font-bold text-pos-green">
+              {editLine.qty}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "del"].map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => pressKey(k)}
+                className="h-12 rounded bg-pos-tile text-lg font-semibold text-foreground hover:bg-pos-hover"
+              >
+                {k === "del" ? <Delete className="mx-auto" size={18} /> : k}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setQtyEditId(null)}
+            className="mt-2 h-11 w-full rounded-md bg-pos-green text-sm font-semibold text-black hover:brightness-110"
+          >
+            Done
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

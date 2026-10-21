@@ -193,3 +193,13 @@
     color: #000 !important;
   }
 }
+
+/* quantity popup auto-close countdown (3s) */
+@keyframes pos-qty-timer {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.pos-qty-timer {
+  transform-origin: left;
+  animation: pos-qty-timer 3s linear forwards;
+}
