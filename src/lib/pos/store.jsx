@@ -42,6 +42,7 @@ const defaultState = () => ({
 
 // completely blank slate (used by the restricted system reboot action)
 export const blankState = () => ({
+  seedVersion: 3, // so a deliberate blank slate is NOT refilled with the menu by migrate()
   categories: [],
   products: [],
   customers: [{ id: "cu1", name: "Walk-in", phone: "", debt: 0 }],
@@ -91,7 +92,9 @@ function migrate(parsed) {
       next.products.length > 0 &&
       next.products.length <= 16 &&
       next.products.every((p) => /^p([1-9]|1[0-6])$/.test(p.id) && /^500000000\d{3}$/.test(p.barcode || ""));
-    if (onlyOldDemo) {
+    // a blank store (e.g. after a system reboot on an older build) also gets the menu once
+    const blankStore = next.products.length === 0;
+    if (onlyOldDemo || blankStore) {
       next.products = base.products;
       next.categories = base.categories;
     }
