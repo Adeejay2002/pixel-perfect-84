@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  STORAGE_KEY, DEFAULT_OWNER_PASSCODE, DEFAULT_CASHIER_PASSCODE, SUPER_ADMIN_PASSCODE, hashCode, canSeeCost,
+  STORAGE_KEY, DEFAULT_OWNER_PASSCODE, DEFAULT_CASHIER_PASSCODE, hashCode, canSeeCost,
 } from "./config";
 import { SEED_PRODUCTS, SEED_CUSTOMERS, SEED_SALES, SEED_CATEGORIES } from "./seed";
+import { computeDelta } from "./delta";
+import { newId } from "./ids";
+import { deriveEvents } from "./ledger";
 
 // ---------------------------------------------------------------------------
 // Data access layer. Every read/write to persisted data goes through here so
@@ -12,10 +15,8 @@ import { SEED_PRODUCTS, SEED_CUSTOMERS, SEED_SALES, SEED_CATEGORIES } from "./se
 const defaultSettings = () => ({
   ownerPasscodeHash: hashCode(DEFAULT_OWNER_PASSCODE),
   cashierPasscodeHash: hashCode(DEFAULT_CASHIER_PASSCODE),
-  superAdminPasscodeHash: hashCode(SUPER_ADMIN_PASSCODE),
   ownerPasscodeChanged: false,
   cashierPasscodeChanged: false,
-  superAdminPasscodeChanged: false,
   cashiers: [{ id: "ca1", name: "Cashier 1", passcodeHash: hashCode(DEFAULT_CASHIER_PASSCODE) }],
   idleMinutes: 5,
   taxRate: 0.08,
@@ -26,6 +27,7 @@ const defaultSettings = () => ({
   shopLogo: "", // data URL (base64) — shown on-screen and printed at the top of every receipt
   billDiscountEnabled: false,
   billDiscountPercent: 10,
+  theme: "dark", // "dark" | "light" (switch button in the toolbar)
 });
 
 const defaultState = () => ({
@@ -34,6 +36,10 @@ const defaultState = () => ({
   customers: SEED_CUSTOMERS,
   sales: SEED_SALES,
   heldSales: [],
+  suppliers: [],
+  purchases: [],
+  batches: [],
+  expenses: [],
   nextSaleNo: 1042,
   shift: null,
   shifts: [],
@@ -42,12 +48,15 @@ const defaultState = () => ({
 
 // completely blank slate (used by the restricted system reboot action)
 export const blankState = () => ({
-  seedVersion: 3, // so a deliberate blank slate is NOT refilled with the menu by migrate()
   categories: [],
   products: [],
   customers: [{ id: "cu1", name: "Walk-in", phone: "", debt: 0 }],
   sales: [],
   heldSales: [],
+  suppliers: [],
+  purchases: [],
+  batches: [],
+  expenses: [],
   nextSaleNo: 1001,
   shift: null,
   shifts: [],
@@ -62,6 +71,9 @@ function migrate(parsed) {
     settings: { ...base.settings, ...(parsed.settings || {}) },
   };
   const s = parsed.settings || {};
+  // the old shared Super Admin passcode no longer exists: remove it from saved data
+  delete next.settings.superAdminPasscodeHash;
+  delete next.settings.superAdminPasscodeChanged;
   // legacy single client passcode becomes the owner passcode
   if (s.clientPasscodeHash && !s.ownerPasscodeHash) {
     next.settings.ownerPasscodeHash = s.clientPasscodeHash;
@@ -80,27 +92,26 @@ function migrate(parsed) {
       ? names.map((name, i) => ({ id: `c${i + 1}`, name, tone: i % 2 === 0 ? "blue" : "purple" }))
       : SEED_CATEGORIES.map((c) => ({ ...c }));
   }
-  next.products = (next.products || []).map((p) => ({ discountPercent: 0, ...p }));
+  // supplier link + reorder level feed the stock alerts / supplier shopping list
+  next.products = (next.products || []).map((p) => ({ discountPercent: 0, supplierId: null, reorderLevel: 0, ...p }));
+  for (const key of ["suppliers", "purchases", "batches", "expenses"]) {
+    next[key] = Array.isArray(next[key]) ? next[key] : [];
+  }
   // legacy seeded data stored prices in plain rupees while money() expects cents.
   // rescale only untouched seed rows (matched by id + the exact old value).
-  // (the old demo cafe items are replaced wholesale below, so no rescale is needed)
-  // seedVersion 3: the demo cafe menu became the restaurant menu. Data that still
-  // holds ONLY the untouched old demo products (p1..p16) is swapped to the new menu;
-  // anything the owner added or edited is left alone.
-  if ((parsed.seedVersion || 0) < 3) {
-    const onlyOldDemo =
-      next.products.length > 0 &&
-      next.products.length <= 16 &&
-      next.products.every((p) => /^p([1-9]|1[0-6])$/.test(p.id) && /^500000000\d{3}$/.test(p.barcode || ""));
-    // a blank store (e.g. after a system reboot on an older build) also gets the menu once
-    const blankStore = next.products.length === 0;
-    if (onlyOldDemo || blankStore) {
-      next.products = base.products;
-      next.categories = base.categories;
-    }
+  if (!parsed.seedVersion) {
+    const oldSeed = new Map(SEED_PRODUCTS.map((p) => [p.id, { price: p.price / 100, cost: p.cost / 100 }]));
+    next.products = next.products.map((p) => {
+      const o = oldSeed.get(p.id);
+      if (!o) return p;
+      const patch = {};
+      if (p.price === o.price) patch.price = o.price * 100;
+      if ((p.cost || 0) === o.cost) patch.cost = o.cost * 100;
+      return { ...p, ...patch };
+    });
   }
   next.customers = Array.isArray(next.customers) && next.customers.length ? next.customers : defaultState().customers;
-  next.seedVersion = 3;
+  next.seedVersion = 2;
   next.sales = (next.sales || []).map((sale) => ({ items: [], refunded: false, ...sale }));
   next.heldSales = Array.isArray(next.heldSales) ? next.heldSales : [];
   next.shifts = Array.isArray(next.shifts) ? next.shifts : [];
@@ -115,22 +126,25 @@ function migrate(parsed) {
 }
 
 
+// Returns { state, persisted }. `persisted` is true only when the state really
+// came from the database on disk (Electron) — used to decide between a first
+// full save and later delta saves.
 async function load() {
-  if (typeof window === "undefined") return defaultState();
+  if (typeof window === "undefined") return { state: defaultState(), persisted: false };
   if (window.posData?.isElectron) {
     try {
       const saved = await window.posData.load();
-      return saved ? migrate(saved) : defaultState();
+      return saved ? { state: migrate(saved), persisted: true } : { state: defaultState(), persisted: false };
     } catch {
-      return defaultState();
+      return { state: defaultState(), persisted: false };
     }
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    return migrate(JSON.parse(raw));
+    if (!raw) return { state: defaultState(), persisted: false };
+    return { state: migrate(JSON.parse(raw)), persisted: false };
   } catch {
-    return defaultState();
+    return { state: defaultState(), persisted: false };
   }
 }
 
@@ -145,9 +159,15 @@ const PosContext = createContext(null);
 export function PosProvider({ children }) {
   const [db, setDb] = useState(defaultState);
   const [hydrated, setHydrated] = useState(false);
+  // Last state known to be on disk (Electron). null = nothing persisted yet,
+  // so the next save writes everything; after that only deltas are sent.
+  const savedRef = useRef(null);
+  const saveChainRef = useRef(Promise.resolve());
+  // who is logged in right now (for the audit log); updated every render
+  const actorRef = useRef({ name: null, role: null });
 
   // auth
-  const [session, setSession] = useState(null); // { role: 'cashier' | 'owner' | 'super' }
+  const [session, setSession] = useState(null); // { role: 'cashier' | 'owner' }
   // cart
   const saleNo = db.nextSaleNo || 1042;
   const setSaleNo = useCallback((fn) => {
@@ -161,8 +181,9 @@ export function PosProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false;
-    load().then((loaded) => {
+    load().then(({ state: loaded, persisted }) => {
       if (!cancelled) {
+        savedRef.current = persisted ? loaded : null;
         setDb(loaded);
         setHydrated(true);
       }
@@ -175,7 +196,30 @@ export function PosProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     if (window.posData?.isElectron) {
-      window.posData.save(db).catch(() => {});
+      const prev = savedRef.current;
+      savedRef.current = db;
+      // Saves run one after another so they reach the database in order.
+      // history (stock movements, price changes, audit log) is derived from this change
+      const events = prev ? deriveEvents(prev, db, actorRef.current) : null;
+      saveChainRef.current = saveChainRef.current.then(async () => {
+        try {
+          if (prev && window.posData.saveDelta) {
+            let delta = computeDelta(prev, db);
+            if (events) {
+              delta = delta || { upserts: {}, deletes: {}, scalars: {} };
+              delta.upserts = { ...delta.upserts, ...events };
+            }
+            if (!delta) return; // nothing changed
+            const res = await window.posData.saveDelta(delta);
+            if (res?.ok || res?.blocked) return;
+          }
+          // first save, or the delta path was unavailable: write everything
+          await window.posData.save(db);
+        } catch {
+          // force a full save on the next change
+          savedRef.current = null;
+        }
+      });
       return;
     }
     try {
@@ -184,6 +228,12 @@ export function PosProvider({ children }) {
       /* ignore quota errors in mock phase */
     }
   }, [db, hydrated]);
+
+  // apply the saved theme to the whole window (CSS reads data-theme on <html>)
+  const theme = db.settings?.theme === "light" ? "light" : "dark";
+  useEffect(() => {
+    if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   const showToast = useCallback((message, tone = "success") => {
     setToast({ message, tone, id: Date.now() });
@@ -194,9 +244,10 @@ export function PosProvider({ children }) {
   const login = useCallback((role, name = null) => setSession({ role, name, at: Date.now() }), []);
   const logout = useCallback(() => setSession(null), []);
   const role = session?.role || null;
-  const isOwner = role === "owner" || role === "super";
+  const isOwner = role === "owner";
   const operatorName =
-    session?.name || (role === "owner" ? "Owner" : role === "super" ? "Admin" : "Cashier");
+    session?.name || (role === "owner" ? "Owner" : "Cashier");
+  actorRef.current = { name: operatorName, role };
 
 
   // ---- idle auto lock ----------------------------------------------------
@@ -217,16 +268,7 @@ export function PosProvider({ children }) {
   }, [session, db.settings.idleMinutes]);
 
   // ---- cart --------------------------------------------------------------
-  // The line the numpad edits. Falls back to the newest non-void line (see selectedLine).
-  const [selectedLineId, setSelectedLineId] = useState(null);
-  // line whose quantity is being typed on the numpad popup (null = popup closed)
-  const [qtyEditId, setQtyEditId] = useState(null);
-  const linesRef = useRef([]);
-  linesRef.current = lines;
-
   const addLine = useCallback((product) => {
-    const existingNow = linesRef.current.find((l) => l.productId === product.id && l.status === "new");
-    const newId = `l${Date.now()}${Math.random().toString(16).slice(2, 6)}`;
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === product.id && l.status === "new");
       if (existing) {
@@ -235,7 +277,7 @@ export function PosProvider({ children }) {
       return [
         ...prev,
         {
-          id: newId,
+          id: `l${Date.now()}${Math.random().toString(16).slice(2, 6)}`,
           productId: product.id,
           name: product.name,
           price: product.price,
@@ -248,7 +290,6 @@ export function PosProvider({ children }) {
         },
       ];
     });
-    setSelectedLineId(existingNow ? existingNow.id : newId);
   }, []);
 
   const addLineByCode = useCallback(
@@ -276,14 +317,8 @@ export function PosProvider({ children }) {
     );
   }, []);
 
-  const selectedLine =
-    lines.find((l) => l.id === selectedLineId && l.status !== "void") ||
-    [...lines].reverse().find((l) => l.status !== "void") ||
-    null;
-
   const clearCart = useCallback(() => {
     setLines([]);
-    setSelectedLineId(null);
     setBillDiscountOn(false);
   }, []);
 
@@ -328,7 +363,7 @@ export function PosProvider({ children }) {
       heldSales: [
         ...d.heldSales,
         {
-          id: `hold-${saleNo}-${Date.now()}`,
+          id: newId("hold"),
           saleNo,
           lines,
           customerId,
@@ -379,7 +414,7 @@ export function PosProvider({ children }) {
       voidedOrders: [
         ...(d.voidedOrders || []),
         {
-          id: `void-${Date.now()}`,
+          id: newId("void"),
           saleNo,
           reason: reason || "No reason given",
           cashierName: operatorName,
@@ -420,7 +455,7 @@ export function PosProvider({ children }) {
       // bill discount is spread over the whole ticket; revenue = net of discounts
       const revenue = totals.net;
       const payload = {
-        id: `s-${saleNo}-${Date.now()}`,
+        id: newId("s"),
         saleNo,
         items,
         method,
@@ -576,7 +611,7 @@ export function PosProvider({ children }) {
     setDb((d) => ({
       ...d,
       shift: {
-        id: `sh-${Date.now()}`,
+        id: newId("sh"),
         openingFloat: Math.round(Number(openingFloat) || 0),
         cashierName: name || operatorName,
         openedAt: new Date().toISOString(),
@@ -648,7 +683,7 @@ export function PosProvider({ children }) {
     setDb((d) => ({ ...d, products: d.products.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
   }, []);
   const addProduct = useCallback((product) => {
-    setDb((d) => ({ ...d, products: [...d.products, { id: `p${Date.now()}`, modifiers: false, discountPercent: 0, ...product }] }));
+    setDb((d) => ({ ...d, products: [...d.products, { id: newId("p"), modifiers: false, discountPercent: 0, ...product }] }));
   }, []);
   const removeProduct = useCallback((id) => {
     setDb((d) => ({ ...d, products: d.products.filter((p) => p.id !== id) }));
@@ -662,7 +697,7 @@ export function PosProvider({ children }) {
   const addCustomer = useCallback((name, phone) => {
     const trimmedName = String(name || "").trim();
     if (!trimmedName) return null;
-    const newCustomer = { id: `cu${Date.now()}`, name: trimmedName, phone: String(phone || "").trim(), debt: 0 };
+    const newCustomer = { id: newId("cu"), name: trimmedName, phone: String(phone || "").trim(), debt: 0 };
     setDb((d) => ({ ...d, customers: [...(Array.isArray(d.customers) ? d.customers : []), newCustomer] }));
     return newCustomer;
   }, []);
@@ -685,7 +720,7 @@ export function PosProvider({ children }) {
         existingBarcodes.add(barcode);
         added++;
         toAdd.push({
-          id: `p${Date.now()}${i}`,
+          id: newId("p"),
           name,
           category: String(r.category || "").trim() || "Uncategorized",
           price: Math.round((Number(r.price) || 0) * 100),
@@ -713,7 +748,7 @@ export function PosProvider({ children }) {
         existingNames.add(name.toLowerCase());
         added++;
         toAdd.push({
-          id: `cu${Date.now()}${i}`,
+          id: newId("cu"),
           name,
           phone: String(r.phone || "").trim(),
           debt: Math.max(0, Math.round((Number(r.debt) || 0) * 100)),
@@ -734,9 +769,6 @@ export function PosProvider({ children }) {
   const setCashierPasscode = useCallback((code) => {
     setDb((d) => ({ ...d, settings: { ...d.settings, cashierPasscodeHash: hashCode(code), cashierPasscodeChanged: true } }));
   }, []);
-  const setSuperAdminPasscode = useCallback((code) => {
-    setDb((d) => ({ ...d, settings: { ...d.settings, superAdminPasscodeHash: hashCode(code), superAdminPasscodeChanged: true } }));
-  }, []);
   const resetPasscodes = useCallback(() => {
     setDb((d) => ({
       ...d,
@@ -756,7 +788,7 @@ export function PosProvider({ children }) {
         ...d.settings,
         cashiers: [
           ...(d.settings.cashiers || []),
-          { id: `ca${Date.now()}`, name, passcodeHash: hashCode(code) },
+          { id: newId("ca"), name, passcodeHash: hashCode(code) },
         ],
       },
     }));
@@ -773,7 +805,7 @@ export function PosProvider({ children }) {
     if (!trimmed) return false;
     setDb((d) => {
       if ((d.categories || []).some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) return d;
-      return { ...d, categories: [...(d.categories || []), { id: `cat${Date.now()}`, name: trimmed, tone }] };
+      return { ...d, categories: [...(d.categories || []), { id: newId("cat"), name: trimmed, tone }] };
     });
     return true;
   }, []);
@@ -841,6 +873,92 @@ export function PosProvider({ children }) {
     return true;
   }, [validateBackup, showToast]);
 
+
+  // ---- suppliers, expenses, purchases (feed the future AI assistant) --------
+  const addSupplier = useCallback((supplier) => {
+    const name = String(supplier?.name || "").trim();
+    if (!name) return null;
+    const row = { id: newId("sup"), name, phone: String(supplier.phone || "").trim(), note: String(supplier.note || "").trim() };
+    setDb((d) => ({ ...d, suppliers: [...(d.suppliers || []), row] }));
+    return row;
+  }, []);
+  const updateSupplier = useCallback((id, patch) => {
+    setDb((d) => ({ ...d, suppliers: (d.suppliers || []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+  }, []);
+  const removeSupplier = useCallback((id) => {
+    setDb((d) => ({
+      ...d,
+      suppliers: (d.suppliers || []).filter((x) => x.id !== id),
+      products: d.products.map((p) => (p.supplierId === id ? { ...p, supplierId: null } : p)),
+    }));
+  }, []);
+
+  // amount in cents; category e.g. rent / electricity / wages / transport / other
+  const addExpense = useCallback((expense) => {
+    const amount = Math.round(Number(expense?.amount) || 0);
+    if (amount <= 0) return null;
+    const row = {
+      id: newId("ex"),
+      date: expense.date || new Date().toISOString(),
+      category: String(expense.category || "other").trim() || "other",
+      amount,
+      note: String(expense.note || "").trim(),
+      by: operatorName,
+    };
+    setDb((d) => ({ ...d, expenses: [...(d.expenses || []), row] }));
+    return row;
+  }, [operatorName]);
+  const removeExpense = useCallback((id) => {
+    setDb((d) => ({ ...d, expenses: (d.expenses || []).filter((x) => x.id !== id) }));
+  }, []);
+
+  // Goods received from a supplier. items: [{ productId, qty, cost (cents), expiry? (YYYY-MM-DD) }].
+  // Adds stock, updates the product's cost (price history records the change),
+  // and creates a batch row for items with an expiry date.
+  const receivePurchase = useCallback((purchase) => {
+    const items = (purchase?.items || [])
+      .map((i) => ({ productId: i.productId, qty: Math.floor(Number(i.qty) || 0), cost: Math.round(Number(i.cost) || 0), expiry: i.expiry || null }))
+      .filter((i) => i.productId && i.qty > 0);
+    if (!items.length) return null;
+    const row = {
+      id: newId("pu"),
+      date: new Date().toISOString(),
+      supplierId: purchase.supplierId || null,
+      invoiceNo: String(purchase.invoiceNo || "").trim(),
+      items,
+      total: items.reduce((sum, i) => sum + i.qty * i.cost, 0),
+      by: operatorName,
+    };
+    setDb((d) => {
+      const qtyBy = new Map();
+      const costBy = new Map();
+      items.forEach((i) => {
+        qtyBy.set(i.productId, (qtyBy.get(i.productId) || 0) + i.qty);
+        if (i.cost > 0) costBy.set(i.productId, i.cost);
+      });
+      return {
+        ...d,
+        purchases: [...(d.purchases || []), row],
+        batches: [
+          ...(d.batches || []),
+          ...items
+            .filter((i) => i.expiry)
+            .map((i) => ({ id: newId("bt"), productId: i.productId, purchaseId: row.id, qty: i.qty, remaining: i.qty, expiry: i.expiry, receivedAt: row.date })),
+        ],
+        products: d.products.map((p) => {
+          const q = qtyBy.get(p.id);
+          if (!q) return p;
+          return { ...p, stock: (p.stock || 0) + q, ...(costBy.has(p.id) ? { cost: costBy.get(p.id) } : {}) };
+        }),
+      };
+    });
+    return row;
+  }, [operatorName]);
+
+  const setTheme = useCallback((theme) => {
+    setDb((d) => ({ ...d, settings: { ...d.settings, theme: theme === "light" ? "light" : "dark" } }));
+  }, []);
+
   const resetAll = useCallback(() => setDb(defaultState()), []);
   const rebootSystem = useCallback(() => {
     setDb(blankState());
@@ -865,10 +983,6 @@ export function PosProvider({ children }) {
     addLineByCode,
     setLineStatus,
     setLineQty,
-    selectedLine,
-    setSelectedLineId,
-    qtyEditId,
-    setQtyEditId,
     clearCart,
     totals,
     billDiscountOn,
@@ -896,7 +1010,6 @@ export function PosProvider({ children }) {
     updateSettings,
     setOwnerPasscode,
     setCashierPasscode,
-    setSuperAdminPasscode,
     resetPasscodes,
     addCashier,
     removeCashier,
@@ -909,6 +1022,13 @@ export function PosProvider({ children }) {
     operatorName,
     rebootSystem,
     resetAll,
+    setTheme,
+    addSupplier,
+    updateSupplier,
+    removeSupplier,
+    addExpense,
+    removeExpense,
+    receivePurchase,
 
     toast,
     showToast,

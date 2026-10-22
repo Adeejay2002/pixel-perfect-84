@@ -1,21 +1,24 @@
-import { Boxes, HandCoins, BarChart3, Settings as Cog, Terminal, LogOut, X, ReceiptText } from "lucide-react";
+import { Boxes, HandCoins, BarChart3, Settings as Cog, Terminal, LogOut, X, ReceiptText, PackagePlus, Truck, Wallet } from "lucide-react";
 import { usePos } from "../../lib/pos/store";
 import { ROLE_LABEL } from "../../lib/pos/config";
 
 export default function MenuDrawer({ open, onClose, onSelect }) {
-  const { session, logout, role, isOwner } = usePos();
+  const { session, logout, isOwner } = usePos();
   if (!open) return null;
 
   const items = [{ id: "history", label: "Bill History", icon: ReceiptText }];
   if (isOwner) {
     items.unshift(
       { id: "inventory", label: "Inventory", icon: Boxes },
+      { id: "purchases", label: "Goods Received", icon: PackagePlus },
+      { id: "suppliers", label: "Suppliers", icon: Truck },
+      { id: "expenses", label: "Expenses", icon: Wallet },
       { id: "debt", label: "Debt Management", icon: HandCoins },
       { id: "reports", label: "Sales Reports", icon: BarChart3 },
       { id: "settings", label: "Settings", icon: Cog },
+      { id: "system", label: "System (backup / reboot)", icon: Terminal },
     );
   }
-  if (role === "super") items.push({ id: "developer", label: "Developer Panel", icon: Terminal });
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/60" onClick={onClose}>

@@ -1,3 +1,4 @@
+import ThemeToggle from "./ThemeToggle";
 import { useEffect, useMemo, useState } from "react";
 import { Delete } from "lucide-react";
 import { usePos } from "../../lib/pos/store";
@@ -25,7 +26,6 @@ export default function LockScreen() {
   const submit = () => {
     if (locked) return;
     const h = hashCode(entry);
-    if (h === settings.superAdminPasscodeHash) return login("super");
     if (h === settings.ownerPasscodeHash) return login("owner", "Owner");
     const match = (settings.cashiers || []).find((c) => c.passcodeHash === h);
     if (match) return login("cashier", match.name);
@@ -44,10 +44,8 @@ export default function LockScreen() {
 
   useEffect(() => {
     const onKey = (e) => {
-      // Any single printable character — not just digits — so the Super
-      // Admin passcode (which can contain letters/symbols, e.g. "Jnex@2026")
-      // can be typed on a physical keyboard. The on-screen pad below still
-      // only offers digits, which is all the Owner/Cashier PINs ever need.
+      // Any single printable character can be typed on a physical keyboard;
+      // the on-screen pad below offers digits, which is all the PINs need.
       if (e.key.length === 1) setEntry((v) => (v.length < 24 ? v + e.key : v));
       else if (e.key === "Backspace") setEntry((v) => v.slice(0, -1));
       else if (e.key === "Enter") submit();
@@ -59,7 +57,8 @@ export default function LockScreen() {
   const keys = useMemo(() => ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "enter"], []);
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-pos-bg">
+    <div className="relative flex h-screen w-screen items-center justify-center bg-pos-bg">
+      <ThemeToggle className="absolute right-4 top-4" />
       <div className={`w-[360px] rounded-xl border border-pos-border bg-pos-panel p-7 shadow-2xl ${shake ? "animate-pos-shake" : ""}`}>
         <div className="mb-6 flex flex-col items-center gap-2">
           <img src="/logo.png" alt="Jnex" className="h-14 w-14 object-contain" />

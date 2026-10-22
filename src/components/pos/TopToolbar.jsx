@@ -4,6 +4,7 @@ import {
 } from "lucide-react";
 import { usePos } from "../../lib/pos/store";
 import { ROLE_LABEL } from "../../lib/pos/config";
+import ThemeToggle from "./ThemeToggle";
 
 function TBtn({ icon: Icon, label, onClick, tone = "neutral", badge, onBadgeClick }) {
   const tones = {
@@ -64,6 +65,7 @@ export default function TopToolbar({ onPayment, onMenu, onFocusSearch, onHistory
         <TBtn icon={ListChecks} label={`Held (${heldSales.length})`} onClick={onHeld} />
         <TBtn icon={CreditCard} label="F10 Payment" onClick={onPayment} tone="green" />
         <TBtn icon={Banknote} label="F12 Cash" onClick={onPayment} />
+        <ThemeToggle className="ml-1" />
         <button
           type="button"
           onClick={onMenu}

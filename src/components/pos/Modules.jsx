@@ -3,6 +3,8 @@ import { useRef } from "react";
 import { X, AlertTriangle, Download, Upload, Trash2, Undo2, UserPlus, Plus, ImagePlus } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { usePos, money } from "../../lib/pos/store";
+import { hashCode } from "../../lib/pos/config";
+import { Suppliers, Purchases, Expenses } from "./StockModules";
 
 // Triggers a browser download of `text` as a file — same pattern exportData()
 // in store.jsx already uses for the JSON backup, just reused here for CSV.
@@ -1028,23 +1030,12 @@ function Settings({ onClose }) {
   );
 }
 
-function Developer({ onClose, onOpenReceipt }) {
-  const {
-    products, sales, customers, settings, rebootSystem, showToast, exportData, importData, validateBackup,
-    setSuperAdminPasscode,
-  } = usePos();
-  const [tab, setTab] = useState("sales");
+function SystemPanel({ onClose }) {
+  const { settings, rebootSystem, showToast, exportData, importData, validateBackup } = usePos();
   const [confirm, setConfirm] = useState(false);
+  const [pin, setPin] = useState("");
   const [pending, setPending] = useState(null);
-  const [superPc, setSuperPc] = useState("");
   const fileRef = useRef(null);
-
-  const saveSuperPc = () => {
-    if (superPc.length < 6) return showToast("Use at least 6 characters", "error");
-    setSuperAdminPasscode(superPc);
-    setSuperPc("");
-    return showToast("Super Admin passcode updated");
-  };
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -1061,137 +1052,26 @@ function Developer({ onClose, onOpenReceipt }) {
       showToast("Could not read that file — invalid JSON", "error");
     }
   };
-  const c = settings.currency;
-  const tabs = [
-    { id: "sales", label: `Bills (${sales.length})` },
-    { id: "products", label: `Products (${products.length})` },
-    { id: "customers", label: `Customers (${customers.length})` },
-  ];
+
+  const closeConfirm = () => {
+    setConfirm(false);
+    setPin("");
+  };
+  // Erasing everything needs the owner passcode again, and a backup file is
+  // downloaded first so a mistake can be undone with Import Data.
+  const pinOk = hashCode(pin) === settings.ownerPasscodeHash;
+  const doReboot = () => {
+    if (!pinOk) return;
+    exportData();
+    rebootSystem();
+    closeConfirm();
+    showToast("System rebooted · all data erased (backup file downloaded first)");
+    onClose();
+  };
 
   return (
-    <Shell title="System Panel" onClose={onClose}>
-      <div className="mb-4 flex gap-2">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`h-9 rounded px-4 text-xs font-semibold ${
-              tab === t.id ? "bg-pos-blue text-white" : "bg-pos-tile text-foreground hover:bg-pos-hover"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "sales" && (
-        <table className="w-full text-left text-xs">
-          <thead className="text-muted-foreground">
-            <tr className="border-b border-pos-border">
-              <th className="py-2">Bill</th><th>Date</th><th>Cashier</th><th>Customer</th>
-              <th>Method</th><th>Total</th><th>Profit</th><th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sales.length === 0 && (
-              <tr><td colSpan={8} className="py-6 text-center text-muted-foreground">No bills recorded</td></tr>
-            )}
-            {[...sales].reverse().map((s) => (
-              <tr
-                key={s.id}
-                onClick={() => onOpenReceipt(s)}
-                className="cursor-pointer border-b border-pos-border text-foreground hover:bg-pos-hover"
-              >
-                <td className="py-2">#{s.saleNo ?? "—"}</td>
-                <td className="text-muted-foreground">{new Date(s.date).toLocaleString()}</td>
-                <td>{s.cashierName || "—"}</td>
-                <td className="text-muted-foreground">{s.customerName || "—"}</td>
-                <td className="text-muted-foreground">{s.method || "—"}</td>
-                <td className="font-semibold">{money(s.total || 0, c)}</td>
-                <td className="text-pos-green">{money(s.profit || 0, c)}</td>
-                <td className={s.refunded ? "text-pos-red" : "text-muted-foreground"}>
-                  {s.refunded ? "Refunded" : "Completed"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {tab === "products" && (
-        <table className="w-full text-left text-xs">
-          <thead className="text-muted-foreground">
-            <tr className="border-b border-pos-border">
-              <th className="py-2">Product</th><th>Code</th><th>Category</th><th>Price</th>
-              <th>Cost</th><th>Disc %</th><th>Stock</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.length === 0 && (
-              <tr><td colSpan={7} className="py-6 text-center text-muted-foreground">No products</td></tr>
-            )}
-            {products.map((p) => (
-              <tr key={p.id} className="border-b border-pos-border text-foreground">
-                <td className="py-1.5">{p.name}</td>
-                <td className="text-muted-foreground">{p.code}</td>
-                <td className="text-muted-foreground">{p.category}</td>
-                <td>{money(p.price, c)}</td>
-                <td className="text-muted-foreground">{money(p.cost || 0, c)}</td>
-                <td>{p.discountPercent || 0}</td>
-                <td>{p.stock}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {tab === "customers" && (
-        <table className="w-full text-left text-xs">
-          <thead className="text-muted-foreground">
-            <tr className="border-b border-pos-border">
-              <th className="py-2">Customer</th><th>Phone</th><th>Debt</th>
-            </tr>
-          </thead>
-          <tbody>
-            {customers.map((cu) => (
-              <tr key={cu.id} className="border-b border-pos-border text-foreground">
-                <td className="py-1.5">{cu.name}</td>
-                <td className="text-muted-foreground">{cu.phone || "—"}</td>
-                <td>{money(cu.debt || 0, c)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <div className="mt-6 rounded-md border border-pos-border bg-pos-tile p-4">
-        <p className="mb-2 text-sm font-semibold text-foreground">Super Admin passcode</p>
-        {!settings.superAdminPasscodeChanged && (
-          <p className="mb-2 text-[11px] text-pos-amber">Super Admin passcode is still the default — change it.</p>
-        )}
-        <p className="mb-3 text-[11px] text-muted-foreground">
-          Unlike Owner/Cashier PINs, this can be any mix of letters, numbers and symbols — type it with a
-          keyboard on the login screen instead of the on-screen number pad.
-        </p>
-        <div className="flex gap-2">
-          <input
-            value={superPc}
-            onChange={(e) => setSuperPc(e.target.value)}
-            placeholder="New Super Admin passcode"
-            className="h-9 flex-1 rounded border border-pos-border bg-pos-panel px-3 text-sm text-foreground outline-none"
-          />
-          <button
-            type="button"
-            onClick={saveSuperPc}
-            className="h-9 rounded bg-pos-green px-4 text-xs font-semibold text-black"
-          >
-            Save
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-6 rounded-md border border-pos-border bg-pos-tile p-4">
+    <Shell title="System" onClose={onClose}>
+      <div className="rounded-md border border-pos-border bg-pos-tile p-4">
         <p className="mb-2 text-sm font-semibold text-foreground">Backup &amp; restore</p>
         <p className="mb-3 text-[11px] text-muted-foreground">
           Export downloads every product, bill, customer, held sale and setting as a single JSON file.
@@ -1261,22 +1141,32 @@ function Developer({ onClose, onOpenReceipt }) {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-sm rounded-lg border border-pos-border bg-pos-panel p-5">
             <p className="mb-2 text-sm font-semibold text-foreground">Reboot System?</p>
-            <p className="mb-4 text-xs text-muted-foreground">
+            <p className="mb-3 text-xs text-muted-foreground">
               This will permanently erase all products, sales, customers, and settings back to a blank slate.
-              This cannot be undone. Continue?
+              A backup file is downloaded first. Enter the owner passcode to continue.
             </p>
+            <input
+              type="password"
+              autoFocus
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && doReboot()}
+              placeholder="Owner passcode"
+              className="mb-4 h-9 w-full rounded border border-pos-border bg-pos-tile px-3 text-sm text-foreground outline-none"
+            />
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setConfirm(false)}
+                onClick={closeConfirm}
                 className="h-9 rounded bg-pos-tile text-xs font-semibold text-foreground hover:bg-pos-hover"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => { rebootSystem(); setConfirm(false); showToast("System rebooted · all data erased"); onClose(); }}
-                className="h-9 rounded bg-pos-red text-xs font-semibold text-white"
+                disabled={!pinOk}
+                onClick={doReboot}
+                className="h-9 rounded bg-pos-red text-xs font-semibold text-white disabled:opacity-40"
               >
                 Erase everything
               </button>
@@ -1290,14 +1180,17 @@ function Developer({ onClose, onOpenReceipt }) {
 
 
 export default function Modules({ active, onClose, onOpenReceipt }) {
-  const { isOwner, role } = usePos();
+  const { isOwner } = usePos();
   if (!active) return null;
   if (active === "history") return <History onClose={onClose} onOpenReceipt={onOpenReceipt} />;
   if (!isOwner) return null;
   if (active === "inventory") return <Inventory onClose={onClose} />;
   if (active === "debt") return <Debt onClose={onClose} />;
+  if (active === "purchases") return <Purchases onClose={onClose} />;
+  if (active === "suppliers") return <Suppliers onClose={onClose} />;
+  if (active === "expenses") return <Expenses onClose={onClose} />;
   if (active === "reports") return <Reports onClose={onClose} />;
   if (active === "settings") return <Settings onClose={onClose} />;
-  if (active === "developer" && role === "super") return <Developer onClose={onClose} onOpenReceipt={onOpenReceipt} />;
+  if (active === "system") return <SystemPanel onClose={onClose} />;
   return null;
 }

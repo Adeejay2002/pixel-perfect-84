@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "dist": "npm run build && electron-builder --win --publish=never"
+    "dist": "npm run build && electron-builder --win --publish=never",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -64,7 +65,9 @@
     "tw-animate-css": "^1.3.4",
     "vaul": "^1.1.2",
     "vite-tsconfig-paths": "^6.0.2",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "better-sqlite3": "^11.10.0",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
@@ -87,7 +90,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8"
   },
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "Jnex POS system",
   "author": "Jnex Solution",
   "main": "electron/main.cjs",
@@ -116,6 +119,15 @@
       "uninstallerIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://updates.jnex.com.lk/pos/"
+      }
+    ]
   }
 }

@@ -1,15 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Asterisk,
-  Barcode,
-  Hash,
-  Tag,
-  Search,
-  Keyboard,
-  ChevronFirst,
-  ChevronLeft,
-  ChevronRight,
-  ChevronLast,
+  Asterisk, Barcode, Hash, Tag, Search, Keyboard,
+  ChevronFirst, ChevronLeft, ChevronRight, ChevronLast,
 } from "lucide-react";
 import { usePos, money, discountedPrice } from "../../lib/pos/store";
 
@@ -45,24 +37,16 @@ export default function ProductWorkspace({ searchRef }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // 1-4 digit number = code-range search: trailing zeros are a wildcard, so
-    // "1000" (or "1") lists the whole 1xxx block (Kottu), "2000" the 2xxx block (Rice),
-    // while "1001" narrows to codes starting 1001 (Beef Kottu).
-    const codePrefix =
-      /^\d{1,4}$/.test(q) && (filter === "all" || filter === "code")
-        ? q.replace(/0+$/, "") || q
-        : null;
-    return products
-      .filter((p) => {
-        if (category && p.category !== category) return false;
-        if (!q) return true;
-        if (codePrefix !== null) return p.code.startsWith(codePrefix);
-        if (filter === "barcode") return p.barcode.includes(q);
-        if (filter === "code") return p.code.includes(q);
-        if (filter === "tag") return p.category.toLowerCase().includes(q);
-        return p.name.toLowerCase().includes(q) || p.code.includes(q) || p.barcode.includes(q);
-      })
-      .sort((a, b) => (codePrefix !== null ? a.code.localeCompare(b.code) : 0));
+    return products.filter((p) => {
+      if (category && p.category !== category) return false;
+      if (!q) return true;
+      if (filter === "barcode") return p.barcode.includes(q);
+      if (filter === "code") return p.code.includes(q);
+      if (filter === "tag") return p.category.toLowerCase().includes(q);
+      return (
+        p.name.toLowerCase().includes(q) || p.code.includes(q) || p.barcode.includes(q)
+      );
+    });
   }, [products, query, filter, category]);
 
   const categoryTiles = (categories || []).map((c) => ({ ...c, type: "category" }));
@@ -86,19 +70,14 @@ export default function ProductWorkspace({ searchRef }) {
             type="button"
             onClick={() => setFilter(f.id)}
             className={`flex h-9 w-9 items-center justify-center rounded-md border border-pos-border transition-colors ${
-              filter === f.id
-                ? "bg-pos-blue text-white"
-                : "bg-pos-tile text-muted-foreground hover:bg-pos-hover"
+              filter === f.id ? "bg-pos-blue text-white" : "bg-pos-tile text-muted-foreground hover:bg-pos-hover"
             }`}
           >
             <f.icon size={16} />
           </button>
         ))}
         <div className="relative flex-1">
-          <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            size={15}
-          />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
           <input
             ref={inputRef}
             value={query}
@@ -110,10 +89,7 @@ export default function ProductWorkspace({ searchRef }) {
             placeholder="Search products by name, code or barcode"
             className="h-9 w-full rounded-md border border-pos-border bg-pos-tile pl-9 pr-10 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-pos-blue"
           />
-          <Keyboard
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            size={16}
-          />
+          <Keyboard className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
         </div>
       </div>
 
@@ -159,9 +135,7 @@ export default function ProductWorkspace({ searchRef }) {
                   <span className="h-2 w-2 animate-pos-blink rounded-full bg-pos-red" /> Low stock
                 </span>
               )}
-              {t.modifiers && (
-                <span className="absolute right-2 top-1.5 text-sm text-pos-amber">*</span>
-              )}
+              {t.modifiers && <span className="absolute right-2 top-1.5 text-sm text-pos-amber">*</span>}
               {t.discountPercent > 0 && (
                 <span className="absolute right-1.5 bottom-1.5 rounded bg-pos-amber px-1 text-[9px] font-bold text-black">
                   -{t.discountPercent}%
@@ -172,22 +146,14 @@ export default function ProductWorkspace({ searchRef }) {
                   {t.name.slice(0, 2).toUpperCase()}
                 </div>
               </div>
-              <span className="line-clamp-2 text-center text-xs font-medium text-foreground">
-                {t.name}
-              </span>
-              <span className="text-center font-mono text-[10px] text-muted-foreground">
-                #{t.code}
-              </span>
+              <span className="line-clamp-2 text-center text-xs font-medium text-foreground">{t.name}</span>
               <span className="mt-1 flex items-center justify-center gap-1 text-center text-[11px]">
                 {t.discountPercent > 0 && (
-                  <span className="text-muted-foreground line-through">
-                    {money(t.price, settings.currency)}
-                  </span>
+                  <span className="text-muted-foreground line-through">{money(t.price, settings.currency)}</span>
                 )}
-                <span className="text-pos-green">
-                  {money(discountedPrice(t), settings.currency)}
-                </span>
+                <span className="text-pos-green">{money(discountedPrice(t), settings.currency)}</span>
               </span>
+
             </button>
           ),
         )}

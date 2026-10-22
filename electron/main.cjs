@@ -4,7 +4,7 @@ const http = require("http");
 const { spawn } = require("child_process");
 const net = require("net");
 const fs = require("fs");
-const license = require("./license.cjs");
+const { createUpdater } = require("./updater.cjs");
 
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.ELECTRON_START_URL || "http://localhost:5173";
@@ -45,7 +45,90 @@ function readData() {
     return null;
   }
 }
+// --- SQLite database ----------------------------------------------------------
+// Main storage is <userData>/pos.db (see db.cjs). If SQLite cannot be loaded
+// for any reason, the app falls back to the old pos-data.json file so the shop
+// can keep selling.
+let posDb = null;
+let writesBlocked = false; // set if the database could not be read: never overwrite it
+
+function initDatabase() {
+  try {
+    const { createStore } = require("./db.cjs");
+    posDb = createStore(path.join(app.getPath("userData"), "pos.db"), backupDir());
+    const res = posDb.importLegacyJson(dataPath());
+    if (res.imported) console.log("Imported legacy pos-data.json into SQLite");
+  } catch (err) {
+    console.error("SQLite unavailable, using pos-data.json fallback:", err);
+    posDb = null;
+  }
+}
+
+// --- App updates -------------------------------------------------------------
+let updater = null;
+
+// Snapshot taken right before an update is installed. Keeps the newest 5.
+function preUpdateBackup() {
+  fs.mkdirSync(backupDir(), { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  if (posDb) {
+    posDb.backupTo(path.join(backupDir(), `pre-update-${stamp}.db`));
+  } else if (fs.existsSync(dataPath())) {
+    fs.copyFileSync(dataPath(), path.join(backupDir(), `pre-update-${stamp}.json`));
+  }
+  const old = fs
+    .readdirSync(backupDir())
+    .filter((f) => /^pre-update-/.test(f))
+    .sort();
+  while (old.length > 5) fs.unlinkSync(path.join(backupDir(), old.shift()));
+}
+
+ipcMain.handle("updater:get-state", () => (updater ? updater.getState() : { status: "disabled" }));
+ipcMain.handle("updater:check", () => updater && updater.check());
+ipcMain.handle("updater:download", () => updater && updater.download());
+ipcMain.handle("updater:install", () => updater && updater.install());
+
+// --- Daily local backup -----------------------------------------------------
+// One copy per day in <userData>/backups (SQLite snapshot, or pos-data.json in
+// fallback mode); keeps the newest BACKUP_KEEP of each. Runs at startup and
+// before the first save of each new day. Never throws: a backup problem must
+// not stop sales.
+const BACKUP_KEEP = 14;
+let lastBackupDay = null;
+function backupDir() {
+  return path.join(app.getPath("userData"), "backups");
+}
+function pruneBackups(pattern) {
+  const files = fs
+    .readdirSync(backupDir())
+    .filter((f) => pattern.test(f))
+    .sort();
+  while (files.length > BACKUP_KEEP) fs.unlinkSync(path.join(backupDir(), files.shift()));
+}
+function dailyBackup() {
+  try {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const day = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    if (lastBackupDay === day) return;
+    lastBackupDay = day;
+    fs.mkdirSync(backupDir(), { recursive: true });
+    if (posDb) {
+      const target = path.join(backupDir(), `pos-${day}.db`);
+      if (!fs.existsSync(target)) posDb.backupTo(target);
+      pruneBackups(/^pos-\d{4}-\d{2}-\d{2}\.db$/);
+    } else if (fs.existsSync(dataPath())) {
+      const target = path.join(backupDir(), `pos-data-${day}.json`);
+      if (!fs.existsSync(target)) fs.copyFileSync(dataPath(), target);
+      pruneBackups(/^pos-data-\d{4}-\d{2}-\d{2}\.json$/);
+    }
+  } catch (err) {
+    console.error("Daily backup failed:", err);
+  }
+}
+
 function writeData(data) {
+  dailyBackup(); // snapshot of the previous state, before today's first write
   fs.mkdirSync(path.dirname(dataPath()), { recursive: true });
   const tmp = dataPath() + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(data), "utf8");
@@ -187,12 +270,15 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    initDatabase();
+    dailyBackup();
     buildMenu();
     if (!isDev) {
       await startProductionServer();
       if (!serverProcess) return;
     }
     createWindow();
+    updater = createUpdater({ app, getWindow: () => mainWindow, beforeInstall: preUpdateBackup });
   });
 
   app.on("window-all-closed", () => {
@@ -202,6 +288,14 @@ if (!gotLock) {
 
   app.on("before-quit", () => {
     if (serverProcess) serverProcess.kill();
+    if (posDb) {
+      try {
+        posDb.close();
+      } catch {
+        /* ignore */
+      }
+      posDb = null;
+    }
   });
 
   app.on("activate", () => {
@@ -217,11 +311,46 @@ ipcMain.handle("printers:list", async () => {
   return printers.map((p) => ({ name: p.name, isDefault: p.isDefault }));
 });
 
-ipcMain.handle("data:load", () => readData());
-ipcMain.handle("data:save", (_evt, data) => writeData(data));
+ipcMain.handle("data:load", () => {
+  if (!posDb) return readData();
+  try {
+    return posDb.loadState();
+  } catch (err) {
+    // Do not let the app start from blank data and overwrite a database it
+    // merely failed to read.
+    console.error("Database read failed:", err);
+    writesBlocked = true;
+    dialog.showErrorBox(
+      "Database error",
+      "The POS database could not be read, so saving is switched off to protect your data.\n\n" +
+        "Close the app and contact support. Your daily backups are in:\n" +
+        backupDir(),
+    );
+    return null;
+  }
+});
 
-ipcMain.handle("license:get", () => license.getLicenseState());
-ipcMain.handle("license:activate", (_evt, code) => license.activate(code));
+// Full state (first save, restore/import, or when delta saving isn't available)
+ipcMain.handle("data:save", (_evt, data) => {
+  if (writesBlocked) return false;
+  if (!posDb) return writeData(data);
+  dailyBackup();
+  return posDb.replaceAll(data);
+});
+
+// Only the rows that changed since the last save
+ipcMain.handle("data:save-delta", (_evt, delta) => {
+  if (!posDb) return { ok: false, fallback: true };
+  if (writesBlocked) return { ok: false, blocked: true };
+  try {
+    dailyBackup();
+    posDb.applyDelta(delta);
+    return { ok: true };
+  } catch (err) {
+    console.error("Delta save failed:", err);
+    return { ok: false, error: String(err && err.message ? err.message : err) };
+  }
+});
 
 function printSaleSilently(sale, cfg) {
   return new Promise((resolve) => {
