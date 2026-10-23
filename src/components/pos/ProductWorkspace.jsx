@@ -7,8 +7,40 @@ import { usePos, money, discountedPrice } from "../../lib/pos/store";
 
 const PAGE_SIZE = 15;
 
+// red border = out / low / expired, amber = expiring soon
+function tileBorder(info) {
+  if (info?.stock || info?.expiry === "expired") return "border-pos-red";
+  if (info?.expiry === "soon") return "border-pos-amber";
+  return "border-pos-border";
+}
+
+function StockBadges({ info, stock }) {
+  if (!info) return null;
+  return (
+    <>
+      {info.stock === "out" && (
+        <span className="absolute left-2 top-2 rounded bg-pos-red px-1 text-[9px] font-bold uppercase text-white">Out of stock</span>
+      )}
+      {info.stock === "low" && (
+        <span className="absolute left-2 top-2 flex items-center gap-1 text-[9px] font-bold uppercase text-pos-red">
+          <span className="h-2 w-2 animate-pos-blink rounded-full bg-pos-red" /> Low · {stock} left
+        </span>
+      )}
+      {info.expiry && (
+        <span
+          className={`absolute bottom-1.5 left-1.5 rounded px-1 text-[9px] font-bold ${
+            info.expiry === "expired" ? "bg-pos-red text-white" : "bg-pos-amber text-black"
+          }`}
+        >
+          {info.expiry === "expired" ? "Expired" : info.days === 0 ? "Exp today" : `Exp ${info.days}d`}
+        </span>
+      )}
+    </>
+  );
+}
+
 export default function ProductWorkspace({ searchRef }) {
-  const { products, addLine, addLineByCode, settings, categories } = usePos();
+  const { products, addLine, addLineByCode, settings, categories, stockAlerts } = usePos();
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState(null);
@@ -126,15 +158,11 @@ export default function ProductWorkspace({ searchRef }) {
               key={t.id}
               type="button"
               onClick={() => addLine(t)}
-              className={`relative flex aspect-square flex-col overflow-hidden rounded-md border bg-pos-tile p-2 transition-colors hover:bg-pos-hover ${
-                t.stock < 5 ? "border-pos-red" : "border-pos-border"
-              }`}
+              className={`relative flex aspect-square flex-col overflow-hidden rounded-md border bg-pos-tile p-2 transition-colors hover:bg-pos-hover ${tileBorder(
+                stockAlerts.byProduct.get(t.id),
+              )}`}
             >
-              {t.stock < 5 && (
-                <span className="absolute left-2 top-2 flex items-center gap-1 text-[9px] font-bold uppercase text-pos-red">
-                  <span className="h-2 w-2 animate-pos-blink rounded-full bg-pos-red" /> Low stock
-                </span>
-              )}
+              <StockBadges info={stockAlerts.byProduct.get(t.id)} stock={t.stock} />
               {t.modifiers && <span className="absolute right-2 top-1.5 text-sm text-pos-amber">*</span>}
               {t.discountPercent > 0 && (
                 <span className="absolute right-1.5 bottom-1.5 rounded bg-pos-amber px-1 text-[9px] font-bold text-black">

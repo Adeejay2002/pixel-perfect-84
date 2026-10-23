@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Delete } from "lucide-react";
 import { usePos, money } from "../../lib/pos/store";
+import { useTicketActions } from "./ticketActions";
 
 function Btn({ children, tone = "neutral", onClick, className = "" }) {
   const tones = {
@@ -16,19 +17,30 @@ function Btn({ children, tone = "neutral", onClick, className = "" }) {
   );
 }
 
-export default function PaymentModal({ open, onClose }) {
+export default function PaymentModal({ open, onClose, initialMethod = "Cash", onSearch, onQuantity }) {
   const {
-    lines, totals, settings, completeSale, newSale, voidOrder, holdSale, showToast,
+    lines, totals, settings, completeSale, newSale, holdSale, showToast,
     billDiscountAvailable, billDiscountOn, toggleBillDiscount, customerId, customers,
+    lockScreen, openCashDrawer, comment,
   } = usePos();
-  const [method, setMethod] = useState("Cash");
+  const { editComment, voidWithReason } = useTicketActions();
+  const [method, setMethod] = useState(initialMethod);
   const [tendered, setTendered] = useState("");
   const c = settings.currency;
   const confirmRef = useRef(null);
 
   useEffect(() => {
+    if (open) {
+      setMethod(initialMethod);
+      setTendered("");
+    }
+  }, [open, initialMethod]);
+
+  useEffect(() => {
     if (!open || method !== "Cash") return undefined;
     const onKey = (e) => {
+      // typing into a question dialog (comment / void reason) must not feed the cash pad
+      if (document.querySelector("[data-pos-dialog]")) return;
       if (/^[0-9]$/.test(e.key)) {
         e.preventDefault();
         setTendered((v) => v + e.key);
@@ -124,13 +136,13 @@ export default function PaymentModal({ open, onClose }) {
 
         <div className="flex flex-1 flex-col gap-3 overflow-auto p-4">
           <div className="grid grid-cols-3 gap-2">
-            <Btn onClick={() => showToast("Search", "info")}>F3 Search</Btn>
-            <Btn onClick={() => showToast("Quantity", "info")}>F4 Quantity</Btn>
+            <Btn onClick={onSearch}>F3 Search</Btn>
+            <Btn onClick={onQuantity}>F4 Quantity</Btn>
             <Btn onClick={() => { newSale(); onClose(); }}>F8 New sale</Btn>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            {["Cash", "Credit Card", "Debit Card", "Check", "Account"].map((m) => (
+            {["Cash", "Credit Card", "Debit Card", "Check", "Bank Transfer", "Account"].map((m) => (
               <button
                 key={m}
                 type="button"
@@ -140,7 +152,7 @@ export default function PaymentModal({ open, onClose }) {
                   method === m ? "bg-pos-blue text-white" : "bg-pos-tile text-foreground hover:bg-pos-hover"
                 }`}
               >
-                {m === "Cash" ? "F12 Cash" : m === "Account" ? "Account (on credit)" : m}
+                {m === "Cash" ? "F12 Cash" : m === "Bank Transfer" ? "F7 Bank Transfer" : m === "Account" ? "Account (on credit)" : m}
               </button>
             ))}
           </div>
@@ -188,23 +200,16 @@ export default function PaymentModal({ open, onClose }) {
             >
               F2 Discount {billDiscountAvailable ? `${settings.billDiscountPercent}%` : "(off)"}
             </Btn>
-            <Btn onClick={() => showToast("Comment added", "info")}>Comment</Btn>
-            <Btn onClick={() => showToast("Cash drawer opened")}>Cash drawer</Btn>
+            <Btn tone={comment ? "amber" : "neutral"} onClick={editComment}>{comment ? "Comment ✓" : "Comment"}</Btn>
+            <Btn onClick={() => openCashDrawer("manual")}>Cash drawer</Btn>
           </div>
 
           <div className="mt-auto grid grid-cols-6 gap-2">
             <Btn onClick={() => { holdSale(); onClose(); }}>F9 Save</Btn>
             <Btn tone="green" onClick={confirm} className="col-span-2">F10 Payment</Btn>
-            <Btn onClick={() => showToast("Transfer", "info")}>F7 Transfer</Btn>
-            <Btn onClick={() => showToast("Locked")}>Lock</Btn>
-            <Btn tone="red" onClick={() => {
-              if (!lines.length) return;
-              const ok = window.confirm("Void this order? This cannot be undone.");
-              if (!ok) return;
-              const reason = window.prompt("Reason for voiding (optional):", "") || "";
-              voidOrder(reason);
-              onClose();
-            }}>Void</Btn>
+            <Btn onClick={() => setMethod("Bank Transfer")}>F7 Transfer</Btn>
+            <Btn onClick={() => { lockScreen(); onClose(); }}>Lock</Btn>
+            <Btn tone="red" onClick={async () => { if (await voidWithReason()) onClose(); }}>Void</Btn>
           </div>
         </div>
       </div>

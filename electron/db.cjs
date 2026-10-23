@@ -299,4 +299,4 @@ function createStore(file, backupDir) {
   return { loadState, applyDelta, replaceAll, importLegacyJson, backupTo, close, isEmpty, _db: db };
 }
 
-module.exports = { createStore, COLLECTIONS, LEDGER_COLLECTIONS, MIGRATIONS };
+module.exports = { createStore, openDatabase, COLLECTIONS, LEDGER_COLLECTIONS, MIGRATIONS };

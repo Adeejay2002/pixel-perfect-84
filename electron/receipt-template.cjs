@@ -106,6 +106,7 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
   <div class="row"><span>Bill #${esc(sale.saleNo)}</span><span>${esc(new Date(sale.date).toLocaleString())}</span></div>
   <p>Payment: ${esc(sale.method)}</p>
   ${sale.cashierName ? `<p>Served by: ${esc(sale.cashierName)}</p>` : ""}
+  ${sale.comment ? `<p>Note: ${esc(sale.comment)}</p>` : ""}
   ${sale.refunded ? `<p style="font-weight:700">** REFUNDED **</p>` : ""}
   <div class="hr"></div>
   ${itemRows}

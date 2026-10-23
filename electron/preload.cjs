@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("posHardware", {
   printReceipt: (sale) => ipcRenderer.invoke("print:receipt", sale),
+  openDrawer: () => ipcRenderer.invoke("drawer:open"),
 });
 
 contextBridge.exposeInMainWorld("electronPrinting", {
@@ -28,4 +29,12 @@ contextBridge.exposeInMainWorld("posUpdater", {
     ipcRenderer.on("updater:state", handler);
     return () => ipcRenderer.removeListener("updater:state", handler);
   },
+});
+
+contextBridge.exposeInMainWorld("posBackups", {
+  list: () => ipcRenderer.invoke("backups:list"),
+  inspect: (name) => ipcRenderer.invoke("backups:inspect", name),
+  create: () => ipcRenderer.invoke("backups:create"),
+  restore: (name, actor) => ipcRenderer.invoke("backups:restore", name, actor),
+  openFolder: () => ipcRenderer.invoke("backups:open-folder"),
 });

@@ -8,10 +8,10 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    
-    # Release එකක් create කරන්න අවශ්‍ය permissions
+
+    # needed to create the GitHub Release
     permissions:
-      contents: write 
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -31,13 +31,37 @@ jobs:
       - name: Package Windows installer (.exe)
         run: npx electron-builder --win --publish=never
 
-      # Artifact එකක් විදිහට නැතුව Release එකක් විදිහට upload කිරීම
+      # Shows in the build log exactly what was produced
+      - name: List build output
+        shell: pwsh
+        run: Get-ChildItem dist | Select-Object Name, Length
+
+      # 1) Artifact: appears under "Artifacts" at the bottom of the run page
+      #    (click to download a .zip that contains the installer).
+      - name: Upload installer as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jnex-pos-windows
+          path: |
+            dist/*.exe
+            dist/latest.yml
+            dist/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+      # 2) Draft release: Repository -> Releases (drafts are only visible to
+      #    people with write access). latest.yml + .blockmap are what the
+      #    in-app updater needs, so they are uploaded too.
       - name: Upload EXE to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev-build-${{ github.run_number }}
           name: "Development Build #${{ github.run_number }}"
-          files: dist/*.exe
-          draft: true # Draft එකක් විදිහට සේව් වෙන නිසා පස්සේ ලේසියෙන්ම download කරගන්න පුළුවන්
+          files: |
+            dist/*.exe
+            dist/latest.yml
+            dist/*.blockmap
+          draft: true
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDialog } from "./Dialog";
 
 // Small corner card shown when a new version of the app is available.
 // Nothing downloads or installs until the owner clicks; it never blocks a sale.
@@ -6,6 +7,7 @@ import { useEffect, useState } from "react";
 export default function UpdateBanner() {
   const [state, setState] = useState(null);
   const [dismissedVersion, setDismissedVersion] = useState(null);
+  const dialog = useDialog();
 
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.posUpdater : null;
@@ -28,10 +30,13 @@ export default function UpdateBanner() {
   if (status === "available" && dismissedVersion === version) return null;
 
   const api = window.posUpdater;
-  const restart = () => {
-    if (window.confirm("The app will close and restart to install the update.\nMake sure no sale is in progress. Continue?")) {
-      api.install();
-    }
+  const restart = async () => {
+    const ok = await dialog.confirm({
+      title: "Restart and install the update?",
+      message: "The app will close and open again. Make sure no sale is in progress.",
+      confirmLabel: "Restart & install",
+    });
+    if (ok) api.install();
   };
 
   const btn = "rounded-md px-3 py-1.5 text-xs font-bold";

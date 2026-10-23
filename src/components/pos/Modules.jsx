@@ -5,6 +5,8 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { usePos, money } from "../../lib/pos/store";
 import { hashCode } from "../../lib/pos/config";
 import { Suppliers, Purchases, Expenses } from "./StockModules";
+import { useDialog } from "./Dialog";
+import BackupRestore from "./BackupRestore";
 
 // Triggers a browser download of `text` as a file — same pattern exportData()
 // in store.jsx already uses for the JSON backup, just reused here for CSV.
@@ -378,7 +380,7 @@ const RANGES = [
 ];
 
 function Reports({ onClose }) {
-  const { sales, settings, showToast } = usePos();
+  const { sales, settings, showToast, expenses = [] } = usePos();
   const [range, setRange] = useState("day");
   const c = settings.currency;
 
@@ -392,8 +394,11 @@ function Reports({ onClose }) {
     const revenue = inRange.reduce((s, x) => s + (x.revenue ?? x.total ?? 0), 0);
     const cost = inRange.reduce((s, x) => s + (x.cost ?? 0), 0);
     const profit = inRange.reduce((s, x) => s + (x.profit ?? 0), 0);
-    return { revenue, cost, profit };
-  }, [inRange]);
+    // running costs recorded in Expenses over the same period
+    const from = Date.now() - active.ms;
+    const spent = expenses.filter((e) => new Date(e.date).getTime() >= from).reduce((s, e) => s + e.amount, 0);
+    return { revenue, cost, profit, expenses: spent, net: profit - spent };
+  }, [inRange, expenses, active]);
 
   const perItem = useMemo(() => {
     const map = new Map();
@@ -480,7 +485,7 @@ function Reports({ onClose }) {
         ))}
       </div>
 
-      <div className="mb-4 grid grid-cols-3 gap-3">
+      <div className="mb-4 grid grid-cols-5 gap-3">
         <div className="rounded-md border border-pos-border bg-pos-tile p-4">
           <p className="text-[11px] uppercase text-muted-foreground">Revenue</p>
           <p className="text-2xl font-bold text-pos-green">{money(summary.revenue, c)}</p>
@@ -490,8 +495,16 @@ function Reports({ onClose }) {
           <p className="text-2xl font-bold text-pos-red">{money(summary.cost, c)}</p>
         </div>
         <div className="rounded-md border border-pos-border bg-pos-tile p-4">
-          <p className="text-[11px] uppercase text-muted-foreground">Profit</p>
+          <p className="text-[11px] uppercase text-muted-foreground">Gross profit</p>
           <p className="text-2xl font-bold text-foreground">{money(summary.profit, c)}</p>
+        </div>
+        <div className="rounded-md border border-pos-border bg-pos-tile p-4">
+          <p className="text-[11px] uppercase text-muted-foreground">Expenses</p>
+          <p className="text-2xl font-bold text-pos-amber">{money(summary.expenses, c)}</p>
+        </div>
+        <div className="rounded-md border border-pos-border bg-pos-tile p-4">
+          <p className="text-[11px] uppercase text-muted-foreground">Net profit</p>
+          <p className={`text-2xl font-bold ${summary.net < 0 ? "text-pos-red" : "text-pos-green"}`}>{money(summary.net, c)}</p>
         </div>
       </div>
 
@@ -581,6 +594,7 @@ function Reports({ onClose }) {
 
 function History({ onClose, onOpenReceipt }) {
   const { sales, settings, canSeeCost, isOwner, refundSale, refundSaleItem, showToast } = usePos();
+  const dialog = useDialog();
   const c = settings.currency;
   const list = [...sales].reverse();
   const [expanded, setExpanded] = useState(null);
@@ -650,11 +664,18 @@ function History({ onClose, onOpenReceipt }) {
                             <button
                               type="button"
                               disabled={remaining <= 0}
-                              onClick={(e) => {
+                              onClick={async (e) => {
                                 e.stopPropagation();
-                                const raw = window.prompt(`Refund how many "${it.name}"? (max ${remaining})`, "1");
+                                const raw = await dialog.prompt({
+                                  title: `Refund "${it.name}"`,
+                                  message: `How many to refund? (max ${remaining})`,
+                                  defaultValue: "1",
+                                  inputType: "number",
+                                  inputMode: "numeric",
+                                  confirmLabel: "Refund",
+                                });
                                 if (raw === null) return;
-                                const n = Math.min(remaining, Math.max(1, Number(raw) || 0));
+                                const n = Math.min(remaining, Math.max(1, Math.floor(Number(raw)) || 0));
                                 if (n <= 0) return;
                                 refundSaleItem(s.id, it.productId, n);
                                 showToast(`Refunded ${n} × ${it.name}`);
@@ -1035,6 +1056,7 @@ function SystemPanel({ onClose }) {
   const [confirm, setConfirm] = useState(false);
   const [pin, setPin] = useState("");
   const [pending, setPending] = useState(null);
+  const [restoreOpen, setRestoreOpen] = useState(false);
   const fileRef = useRef(null);
 
   const handleFile = async (e) => {
@@ -1071,8 +1093,23 @@ function SystemPanel({ onClose }) {
 
   return (
     <Shell title="System" onClose={onClose}>
+      <div className="mb-4 rounded-md border border-pos-border bg-pos-tile p-4">
+        <p className="mb-1 text-sm font-semibold text-foreground">Automatic backups</p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          The app saves a backup every day. If something goes wrong (wrong data, a damaged file), bring the shop back to an earlier day.
+        </p>
+        <button
+          type="button"
+          onClick={() => setRestoreOpen(true)}
+          className="h-9 rounded bg-pos-blue px-4 text-xs font-semibold text-white"
+        >
+          Restore from a backup…
+        </button>
+      </div>
+      <BackupRestore open={restoreOpen} onClose={() => setRestoreOpen(false)} />
+
       <div className="rounded-md border border-pos-border bg-pos-tile p-4">
-        <p className="mb-2 text-sm font-semibold text-foreground">Backup &amp; restore</p>
+        <p className="mb-2 text-sm font-semibold text-foreground">Backup &amp; restore (file)</p>
         <p className="mb-3 text-[11px] text-muted-foreground">
           Export downloads every product, bill, customer, held sale and setting as a single JSON file.
           Import replaces all current data with a previously exported backup.

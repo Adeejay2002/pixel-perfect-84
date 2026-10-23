@@ -6,6 +6,7 @@ import { SEED_PRODUCTS, SEED_CUSTOMERS, SEED_SALES, SEED_CATEGORIES } from "./se
 import { computeDelta } from "./delta";
 import { newId } from "./ids";
 import { deriveEvents } from "./ledger";
+import { computeAlerts } from "./alerts";
 
 // ---------------------------------------------------------------------------
 // Data access layer. Every read/write to persisted data goes through here so
@@ -175,6 +176,7 @@ export function PosProvider({ children }) {
   }, []);
   const [lines, setLines] = useState([]);
   const [customerId, setCustomerId] = useState("cu1");
+  const [comment, setComment] = useState(""); // note on the current ticket (saved with the sale, printed on the receipt)
   const [billDiscountOn, setBillDiscountOn] = useState(false);
   const [toast, setToast] = useState(null);
   const [receipt, setReceipt] = useState(null);
@@ -235,6 +237,12 @@ export function PosProvider({ children }) {
     if (typeof document !== "undefined") document.documentElement.dataset.theme = theme;
   }, [theme]);
 
+  // low stock + expiry, recomputed when products/batches change (and when the date rolls over)
+  const alertDay = new Date().toDateString();
+  const stockAlerts = useMemo(() => computeAlerts(db.products, db.batches), [db.products, db.batches, alertDay]);
+  const stockAlertsRef = useRef(stockAlerts);
+  stockAlertsRef.current = stockAlerts;
+
   const showToast = useCallback((message, tone = "success") => {
     setToast({ message, tone, id: Date.now() });
     setTimeout(() => setToast(null), 2600);
@@ -248,6 +256,23 @@ export function PosProvider({ children }) {
   const operatorName =
     session?.name || (role === "owner" ? "Owner" : "Cashier");
   actorRef.current = { name: operatorName, role };
+
+  // Writes one entry straight to the audit log (things that are not a data change,
+  // e.g. opening the cash drawer without a sale). Does nothing outside Electron.
+  const logEvent = useCallback((action, details = {}) => {
+    if (typeof window === "undefined" || !window.posData?.saveDelta) return;
+    const entry = {
+      id: newId("al"),
+      at: new Date().toISOString(),
+      action,
+      actorName: actorRef.current.name,
+      actorRole: actorRef.current.role,
+      details,
+    };
+    saveChainRef.current = saveChainRef.current.then(() =>
+      Promise.resolve(window.posData.saveDelta({ upserts: { auditLog: [entry] }, deletes: {}, scalars: {} })).catch(() => {}),
+    );
+  }, []);
 
 
   // ---- idle auto lock ----------------------------------------------------
@@ -269,6 +294,10 @@ export function PosProvider({ children }) {
 
   // ---- cart --------------------------------------------------------------
   const addLine = useCallback((product) => {
+    // soft warning only: the sale is not blocked (the date may be wrong in the system)
+    if (stockAlertsRef.current.byProduct.get(product.id)?.expiry === "expired") {
+      showToast(`${product.name}: expired stock on record. Check the date before selling.`, "error");
+    }
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === product.id && l.status === "new");
       if (existing) {
@@ -290,7 +319,7 @@ export function PosProvider({ children }) {
         },
       ];
     });
-  }, []);
+  }, [showToast]);
 
   const addLineByCode = useCallback(
     (code) => {
@@ -299,7 +328,8 @@ export function PosProvider({ children }) {
       const match = db.products.find((p) => p.barcode === trimmed || p.code === trimmed);
       if (!match) return false;
       addLine(match);
-      showToast(`${match.name} added`);
+      // an expired-stock warning (shown by addLine) must not be replaced by "added"
+      if (stockAlertsRef.current.byProduct.get(match.id)?.expiry !== "expired") showToast(`${match.name} added`);
       return true;
     },
     [db.products, addLine, showToast],
@@ -320,6 +350,7 @@ export function PosProvider({ children }) {
   const clearCart = useCallback(() => {
     setLines([]);
     setBillDiscountOn(false);
+    setComment("");
   }, []);
 
   const billDiscountAvailable = !!db.settings.billDiscountEnabled;
@@ -368,6 +399,7 @@ export function PosProvider({ children }) {
           lines,
           customerId,
           billDiscountOn,
+          comment,
           cashierName: operatorName,
           at: new Date().toISOString(),
         },
@@ -376,8 +408,9 @@ export function PosProvider({ children }) {
     }));
     setLines([]);
     setBillDiscountOn(false);
+    setComment("");
     showToast("Sale parked in Held Sales");
-  }, [lines, saleNo, customerId, billDiscountOn, operatorName, showToast]);
+  }, [lines, saleNo, customerId, billDiscountOn, comment, operatorName, showToast]);
 
   const resumeHeld = useCallback((id) => {
     setDb((d) => {
@@ -386,6 +419,7 @@ export function PosProvider({ children }) {
       setLines(held.lines || []);
       setCustomerId(held.customerId || "cu1");
       setBillDiscountOn(!!held.billDiscountOn);
+      setComment(held.comment || "");
       return { ...d, heldSales: d.heldSales.filter((h) => h.id !== id) };
     });
     showToast("Held ticket resumed");
@@ -404,6 +438,14 @@ export function PosProvider({ children }) {
     }
     setLines([]);
     setBillDiscountOn(false);
+    setComment("");
+  }, [lines, holdSale]);
+
+  // Lock screen: a ticket in progress is parked in "Held" first, so the next
+  // person to log in never sees (or sells from) someone else's open ticket.
+  const lockScreen = useCallback(() => {
+    if (lines.length) holdSale();
+    setSession(null);
   }, [lines, holdSale]);
 
   // Void order discards the ticket and records the reason
@@ -426,6 +468,7 @@ export function PosProvider({ children }) {
     }));
     setLines([]);
     setBillDiscountOn(false);
+    setComment("");
     showToast("Order voided");
   }, [lines, saleNo, operatorName, showToast]);
 
@@ -465,6 +508,7 @@ export function PosProvider({ children }) {
         cashierName: operatorName,
         cashierRole: role,
         shiftId: db.shift?.id || null,
+        comment: comment.trim(),
 
         subtotal: totals.subtotal,
         productDiscount: totals.productDiscount,
@@ -512,6 +556,7 @@ export function PosProvider({ children }) {
       }
       setLines([]);
       setBillDiscountOn(false);
+      setComment("");
       setReceipt(payload);
       showToast(
         method === "Account"
@@ -520,7 +565,7 @@ export function PosProvider({ children }) {
       );
       return payload;
     },
-    [lines, db.customers, db.settings, db.shift, saleNo, customerId, totals, showToast, operatorName, role],
+    [lines, db.customers, db.settings, db.shift, saleNo, customerId, totals, comment, showToast, operatorName, role],
   );
 
   const refundSale = useCallback((id) => {
@@ -629,7 +674,7 @@ export function PosProvider({ children }) {
       .filter((s) => s.method === "Credit Card" || s.method === "Debit Card")
       .reduce((a, s) => a + (s.total || 0), 0);
     const account = inShift.filter((s) => s.method === "Account").reduce((a, s) => a + (s.total || 0), 0);
-    const other = inShift.filter((s) => s.method === "Check").reduce((a, s) => a + (s.total || 0), 0);
+    const other = inShift.filter((s) => s.method === "Check" || s.method === "Bank Transfer").reduce((a, s) => a + (s.total || 0), 0);
     const refunds = inShift.reduce((a, s) => a + (s.refundedAmount || 0), 0);
     return {
       ...shift,
@@ -955,6 +1000,33 @@ export function PosProvider({ children }) {
     return row;
   }, [operatorName]);
 
+  // Opens the drawer through the receipt printer and always records who did it.
+  // reason: "manual" (button) or "sale" (cash payment).
+  const openCashDrawer = useCallback(
+    async (reason = "manual") => {
+      const hw = typeof window !== "undefined" ? window.posHardware : null;
+      if (!hw?.openDrawer) {
+        logEvent("cash_drawer.open", { reason, ok: false, error: "desktop app only" });
+        showToast("The cash drawer can only be opened from the desktop app", "error");
+        return false;
+      }
+      let result;
+      try {
+        result = await hw.openDrawer();
+      } catch (err) {
+        result = { ok: false, error: String((err && err.message) || err) };
+      }
+      logEvent("cash_drawer.open", { reason, ok: !!result?.ok, ...(result?.ok ? {} : { error: result?.error || "failed" }) });
+      if (result?.ok) {
+        showToast("Cash drawer opened");
+        return true;
+      }
+      showToast(`Could not open the cash drawer${result?.error ? ` — ${result.error}` : ""}`, "error");
+      return false;
+    },
+    [logEvent, showToast],
+  );
+
   const setTheme = useCallback((theme) => {
     setDb((d) => ({ ...d, settings: { ...d.settings, theme: theme === "light" ? "light" : "dark" } }));
   }, []);
@@ -1023,6 +1095,12 @@ export function PosProvider({ children }) {
     rebootSystem,
     resetAll,
     setTheme,
+    comment,
+    setComment,
+    stockAlerts,
+    lockScreen,
+    logEvent,
+    openCashDrawer,
     addSupplier,
     updateSupplier,
     removeSupplier,

@@ -11,6 +11,9 @@ import MenuDrawer from "./MenuDrawer";
 import Modules from "./Modules";
 import ReceiptModal from "./Receipt";
 import UpdateBanner from "./UpdateBanner";
+import CustomerPicker from "./CustomerPicker";
+import AlertsPanel from "./AlertsPanel";
+import { DialogProvider } from "./Dialog";
 
 function Toast() {
   const { toast } = usePos();
@@ -25,25 +28,56 @@ function Toast() {
 }
 
 function Workspace() {
-  const { session, hydrated, holdSale, clearCart, receipt, setReceipt, toggleBillDiscount } = usePos();
+  const { session, hydrated, holdSale, newSale, receipt, setReceipt, toggleBillDiscount, stockAlerts, showToast } = usePos();
   const [payment, setPayment] = useState(false);
   const [menu, setMenu] = useState(false);
   const [module, setModule] = useState(null);
   const [held, setHeld] = useState(false);
   const [quantity, setQuantity] = useState(false);
+  const [customerPicker, setCustomerPicker] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [payMethod, setPayMethod] = useState("Cash"); // method preselected when the payment screen opens
+  const openPayment = (method = "Cash") => {
+    setPayMethod(method);
+    setPayment(true);
+  };
   const searchRef = useRef(null);
+
+  // once per login: a short summary of what needs attention
+  const announcedRef = useRef(false);
+  useEffect(() => {
+    if (!session || !hydrated) {
+      announcedRef.current = false;
+      return;
+    }
+    if (announcedRef.current) return;
+    announcedRef.current = true;
+    const c = stockAlerts.counts;
+    const parts = [];
+    if (c.expired) parts.push(`${c.expired} expired`);
+    if (c.soon) parts.push(`${c.soon} expiring soon`);
+    if (c.out) parts.push(`${c.out} out of stock`);
+    if (c.low) parts.push(`${c.low} low stock`);
+    if (parts.length) showToast(`Stock alerts: ${parts.join(", ")}`, "info");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, hydrated]);
 
   useEffect(() => {
     // capture phase so the shortcuts fire even while the search input has focus
     const onKey = (e) => {
+      // a question dialog (confirm / reason / comment) is open: leave the keys to it
+      if (document.querySelector("[data-pos-dialog]")) return;
       switch (e.key) {
         case "F10":
         case "F12":
-          e.preventDefault(); setPayment(true); break;
+          e.preventDefault(); openPayment("Cash"); break;
+        case "F7":
+          e.preventDefault(); openPayment("Bank Transfer"); break;
         case "F9":
           e.preventDefault(); holdSale(); break;
         case "F8":
-          e.preventDefault(); clearCart(); break;
+          // same as the "New sale" button: the ticket in progress is parked in Held, never thrown away
+          e.preventDefault(); newSale(); break;
         case "F4":
           e.preventDefault(); setQuantity(true); break;
         case "F3":
@@ -52,7 +86,7 @@ function Workspace() {
           e.preventDefault(); toggleBillDiscount(); break;
         case "Escape":
           setPayment(false); setMenu(false); setModule(null); setReceipt(null);
-          setHeld(false); setQuantity(false);
+          setHeld(false); setQuantity(false); setCustomerPicker(false); setAlertsOpen(false);
           break;
         default:
           break;
@@ -60,7 +94,7 @@ function Workspace() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [holdSale, clearCart, toggleBillDiscount, setReceipt]);
+  }, [holdSale, newSale, toggleBillDiscount, setReceipt]);
 
   if (!hydrated) return <div className="h-screen w-screen bg-pos-bg" />;
   if (!session) return <><LockScreen /><Toast /></>;
@@ -69,7 +103,10 @@ function Workspace() {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-pos-bg">
       <div className="pos-no-print flex min-h-0 flex-1 flex-col">
         <TopToolbar
-          onPayment={() => setPayment(true)}
+          onPayment={() => openPayment("Cash")}
+          onTransfer={() => openPayment("Bank Transfer")}
+          onCustomer={() => setCustomerPicker(true)}
+          onAlerts={() => setAlertsOpen(true)}
           onMenu={() => setMenu(true)}
           onHistory={() => setModule("history")}
           onHeld={() => setHeld(true)}
@@ -80,7 +117,15 @@ function Workspace() {
           <TicketPanel />
         </div>
       </div>
-      <PaymentModal open={payment} onClose={() => setPayment(false)} />
+      <PaymentModal
+        open={payment}
+        initialMethod={payMethod}
+        onClose={() => setPayment(false)}
+        onSearch={() => { setPayment(false); setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select?.(); }, 0); }}
+        onQuantity={() => { setPayment(false); setQuantity(true); }}
+      />
+      <CustomerPicker open={customerPicker} onClose={() => setCustomerPicker(false)} />
+      <AlertsPanel open={alertsOpen} onClose={() => setAlertsOpen(false)} onOpenModule={(m) => { setAlertsOpen(false); setModule(m); }} />
       <HeldSalesModal open={held} onClose={() => setHeld(false)} />
       <QuantityModal open={quantity} onClose={() => setQuantity(false)} />
       <MenuDrawer open={menu} onClose={() => setMenu(false)} onSelect={setModule} />
@@ -94,8 +139,10 @@ function Workspace() {
 export default function PosApp() {
   return (
     <PosProvider>
-      <Workspace />
-      <UpdateBanner />
+      <DialogProvider>
+        <Workspace />
+        <UpdateBanner />
+      </DialogProvider>
     </PosProvider>
   );
 }

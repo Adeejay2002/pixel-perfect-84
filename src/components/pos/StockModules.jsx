@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { X, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { usePos, money } from "../../lib/pos/store";
+import { useDialog } from "./Dialog";
+import { daysUntil, estimateBatchStock } from "../../lib/pos/alerts";
 
 // Owner-only screens: Suppliers, Goods Received (purchases + expiry) and
 // Expenses. They fill the data the AI assistant needs later (stock alerts,
@@ -18,13 +20,6 @@ const shortDate = (iso) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
 };
-// whole days from today until a YYYY-MM-DD date (0 = today, negative = already past)
-function daysUntil(day) {
-  const target = new Date(`${day}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target - today) / 86400000);
-}
 // a picked date keeps the current time when it is today, otherwise noon that day
 function dateToIso(day) {
   if (!day || day === dayString()) return new Date().toISOString();
@@ -77,6 +72,7 @@ function Tabs({ tabs, value, onChange }) {
 
 export function Suppliers({ onClose }) {
   const { suppliers = [], products, addSupplier, updateSupplier, removeSupplier, updateProduct, showToast } = usePos();
+  const dialog = useDialog();
   const [form, setForm] = useState({ name: "", phone: "", note: "" });
   const [q, setQ] = useState("");
 
@@ -130,8 +126,14 @@ export function Suppliers({ onClose }) {
               <span className="text-[11px] text-muted-foreground">{linked.get(s.id) || 0} product(s)</span>
               <button
                 type="button"
-                onClick={() => {
-                  if (window.confirm(`Delete supplier "${s.name}"? Their products will have no supplier.`)) removeSupplier(s.id);
+                onClick={async () => {
+                  const ok = await dialog.confirm({
+                    title: `Delete supplier "${s.name}"?`,
+                    message: "Their products will be left without a supplier.",
+                    confirmLabel: "Delete",
+                    danger: true,
+                  });
+                  if (ok) removeSupplier(s.id);
                 }}
                 className="rounded p-1 text-pos-red hover:bg-pos-hover"
               >
@@ -433,33 +435,11 @@ function PurchaseHistory({ purchases, productById, supplierById, cur }) {
   );
 }
 
-// The system does not deduct sales from individual batches. Instead the stock
-// currently on hand is assumed to come from the most recently received batches
-// (oldest goods are sold first), which gives a good estimate of what is left.
+// Batch estimates come from lib/pos/alerts.js (shared with the Alerts panel).
 function ExpiryList({ batches, productById }) {
   const [filter, setFilter] = useState("all");
 
-  const rows = useMemo(() => {
-    const byProduct = new Map();
-    for (const b of batches) {
-      if (!byProduct.has(b.productId)) byProduct.set(b.productId, []);
-      byProduct.get(b.productId).push(b);
-    }
-    const out = [];
-    for (const [pid, list] of byProduct) {
-      const p = productById.get(pid);
-      if (!p) continue;
-      let left = p.stock || 0;
-      [...list]
-        .sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))
-        .forEach((b) => {
-          const est = Math.min(b.qty, left);
-          left -= est;
-          if (est > 0) out.push({ id: b.id, name: p.name, expiry: b.expiry, est, days: daysUntil(b.expiry) });
-        });
-    }
-    return out.sort((a, b) => a.days - b.days);
-  }, [batches, productById]);
+  const rows = useMemo(() => estimateBatchStock(batches, productById), [batches, productById]);
 
   const expired = rows.filter((r) => r.days < 0);
   const soon = rows.filter((r) => r.days >= 0 && r.days <= 30);
@@ -540,6 +520,7 @@ const RANGES = [
 
 export function Expenses({ onClose }) {
   const { expenses = [], addExpense, removeExpense, settings, showToast } = usePos();
+  const dialog = useDialog();
   const cur = settings.currency;
   const [form, setForm] = useState({ date: dayString(), category: "Other", amount: "", note: "" });
   const [range, setRange] = useState("30");
@@ -652,8 +633,14 @@ export function Expenses({ onClose }) {
                 <td className="text-right">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (window.confirm(`Delete this ${money(e.amount, cur)} ${e.category} expense?`)) removeExpense(e.id);
+                    onClick={async () => {
+                      const ok = await dialog.confirm({
+                        title: "Delete this expense?",
+                        message: `${e.category} · ${money(e.amount, cur)}${e.note ? ` · ${e.note}` : ""}\nThe deletion is recorded in the audit log.`,
+                        confirmLabel: "Delete",
+                        danger: true,
+                      });
+                      if (ok) removeExpense(e.id);
                     }}
                     className="rounded p-1 text-pos-red hover:bg-pos-hover"
                   >

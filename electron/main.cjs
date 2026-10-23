@@ -1,10 +1,12 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const http = require("http");
 const { spawn } = require("child_process");
 const net = require("net");
 const fs = require("fs");
 const { createUpdater } = require("./updater.cjs");
+const drawer = require("./drawer.cjs");
+const restoreTools = require("./restore.cjs");
 
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.ELECTRON_START_URL || "http://localhost:5173";
@@ -51,6 +53,7 @@ function readData() {
 // can keep selling.
 let posDb = null;
 let writesBlocked = false; // set if the database could not be read: never overwrite it
+let pausedForReload = false; // after a restore, until the window has reloaded the restored data
 
 function initDatabase() {
   try {
@@ -87,6 +90,54 @@ ipcMain.handle("updater:get-state", () => (updater ? updater.getState() : { stat
 ipcMain.handle("updater:check", () => updater && updater.check());
 ipcMain.handle("updater:download", () => updater && updater.download());
 ipcMain.handle("updater:install", () => updater && updater.install());
+
+// --- Backups screen (list / preview / restore) -------------------------------
+ipcMain.handle("backups:list", () => (posDb ? restoreTools.listBackups(backupDir()) : []));
+
+ipcMain.handle("backups:inspect", (_evt, name) => {
+  if (!posDb) return { ok: false, error: "Database backups are not available" };
+  const { openDatabase, MIGRATIONS } = require("./db.cjs");
+  return restoreTools.inspectBackup({ backupDir: backupDir(), name: String(name || ""), openDatabase, maxVersion: MIGRATIONS.length });
+});
+
+ipcMain.handle("backups:create", () => {
+  if (!posDb) return { ok: false, error: "Database backups are not available" };
+  try {
+    return { ok: true, name: restoreTools.createManualBackup(posDb, backupDir()) };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+ipcMain.handle("backups:open-folder", async () => {
+  fs.mkdirSync(backupDir(), { recursive: true });
+  const err = await shell.openPath(backupDir());
+  return err ? { ok: false, error: err } : { ok: true };
+});
+
+ipcMain.handle("backups:restore", (_evt, name, actor) => {
+  if (!posDb) return { ok: false, error: "Database backups are not available" };
+  const { createStore, openDatabase, MIGRATIONS } = require("./db.cjs");
+  const result = restoreTools.restoreBackup({
+    store: posDb,
+    dbFile: path.join(app.getPath("userData"), "pos.db"),
+    backupDir: backupDir(),
+    name: String(name || ""),
+    createStore,
+    openDatabase,
+    maxVersion: MIGRATIONS.length,
+    actor: actor || {},
+  });
+  posDb = result.store; // null only if even the old database could not be reopened
+  if (!posDb) writesBlocked = true;
+  if (!result.ok) return { ok: false, error: result.error };
+  // stop the old screen from writing its (older) state over the restored data, then reload it
+  pausedForReload = true;
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+  }, 400);
+  return { ok: true, safetyCopy: result.safetyCopy };
+});
 
 // --- Daily local backup -----------------------------------------------------
 // One copy per day in <userData>/backups (SQLite snapshot, or pos-data.json in
@@ -245,6 +296,25 @@ function buildMenu() {
       submenu: [
         { label: "Select receipt printer…", click: () => createSettingsWindow() },
         { type: "separator" },
+        {
+          label: "Test cash drawer",
+          click: async () => {
+            const r = await openDrawerFromConfig();
+            dialog.showMessageBox(mainWindow, {
+              type: r.ok ? "info" : "warning",
+              message: r.ok ? "Drawer command sent." : "Could not open the cash drawer.",
+              detail: r.ok ? "If the drawer did not open, try the other pin setting below." : r.error || "",
+            });
+          },
+        },
+        {
+          label: "Cash drawer connector",
+          submenu: [
+            { label: "Pin 2 (most drawers)", type: "radio", checked: readConfig().drawerPin !== 1, click: () => writeConfig({ drawerPin: 0 }) },
+            { label: "Pin 5", type: "radio", checked: readConfig().drawerPin === 1, click: () => writeConfig({ drawerPin: 1 }) },
+          ],
+        },
+        { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" },
         { type: "separator" },
@@ -314,6 +384,7 @@ ipcMain.handle("printers:list", async () => {
 ipcMain.handle("data:load", () => {
   if (!posDb) return readData();
   try {
+    pausedForReload = false;
     return posDb.loadState();
   } catch (err) {
     // Do not let the app start from blank data and overwrite a database it
@@ -332,7 +403,7 @@ ipcMain.handle("data:load", () => {
 
 // Full state (first save, restore/import, or when delta saving isn't available)
 ipcMain.handle("data:save", (_evt, data) => {
-  if (writesBlocked) return false;
+  if (writesBlocked || pausedForReload) return false;
   if (!posDb) return writeData(data);
   dailyBackup();
   return posDb.replaceAll(data);
@@ -341,7 +412,7 @@ ipcMain.handle("data:save", (_evt, data) => {
 // Only the rows that changed since the last save
 ipcMain.handle("data:save-delta", (_evt, delta) => {
   if (!posDb) return { ok: false, fallback: true };
-  if (writesBlocked) return { ok: false, blocked: true };
+  if (writesBlocked || pausedForReload) return { ok: false, blocked: true };
   try {
     dailyBackup();
     posDb.applyDelta(delta);
@@ -398,6 +469,24 @@ function printSaleWithDialog(sale, cfg) {
     });
   });
 }
+
+// Cash drawer: kick pulse through the configured receipt printer (see drawer.cjs)
+async function openDrawerFromConfig() {
+  if (process.platform !== "win32") return { ok: false, error: "The cash drawer is supported on Windows only" };
+  const cfg = readConfig();
+  let name = cfg.deviceName;
+  if (!name && mainWindow) {
+    try {
+      const list = await mainWindow.webContents.getPrintersAsync();
+      name = (list.find((p) => p.isDefault) || list[0] || {}).name;
+    } catch {
+      /* no printer list */
+    }
+  }
+  if (!name) return { ok: false, error: "No receipt printer selected (Printer menu > Select receipt printer…)" };
+  return drawer.openDrawer({ printerName: name, pin: cfg.drawerPin === 1 ? 1 : 0, scriptDir: app.getPath("userData") });
+}
+ipcMain.handle("drawer:open", () => openDrawerFromConfig());
 
 ipcMain.handle("print:receipt", async (_evt, sale) => {
   if (!mainWindow) return { ok: false, error: "No window" };

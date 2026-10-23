@@ -1,13 +1,15 @@
 import { Lock, Minus, Plus, Trash2, Percent, User } from "lucide-react";
 import { usePos, money } from "../../lib/pos/store";
+import { useTicketActions } from "./ticketActions";
 
 export default function TicketPanel() {
   const {
     saleNo, lines, totals, settings, customers, customerId, setCustomerId,
-    setLineStatus, setLineQty, voidOrder, showToast,
+    setLineStatus, setLineQty, lockScreen, comment,
     billDiscountAvailable, billDiscountOn, toggleBillDiscount,
   } = usePos();
   const c = settings.currency;
+  const { editComment, voidWithReason } = useTicketActions();
 
   return (
     <aside className="flex w-[35%] min-w-[340px] flex-col border-l border-pos-border bg-pos-panel">
@@ -31,6 +33,16 @@ export default function TicketPanel() {
           ))}
         </select>
       </div>
+      {comment && (
+        <button
+          type="button"
+          onClick={editComment}
+          title="Edit comment"
+          className="w-full border-b border-pos-border bg-pos-tile px-3 py-1.5 text-left text-[11px] italic text-muted-foreground hover:bg-pos-hover"
+        >
+          “{comment}”
+        </button>
+      )}
 
       <div className="flex-1 overflow-auto">
         {lines.length === 0 && (
@@ -134,13 +146,7 @@ export default function TicketPanel() {
       <div className="grid grid-cols-3 gap-2 border-t border-pos-border p-3">
         <button
           type="button"
-          onClick={() => {
-            if (!lines.length) return;
-            const ok = window.confirm("Void this order? This cannot be undone.");
-            if (!ok) return;
-            const reason = window.prompt("Reason for voiding (optional):", "") || "";
-            voidOrder(reason);
-          }}
+          onClick={voidWithReason}
           className="h-10 rounded-md bg-pos-red text-xs font-semibold text-white hover:brightness-110"
         >
           Void order
@@ -157,7 +163,7 @@ export default function TicketPanel() {
         </button>
         <button
           type="button"
-          onClick={() => showToast("Ticket locked")}
+          onClick={lockScreen}
           className="flex h-10 items-center justify-center gap-1 rounded-md bg-pos-tile text-xs font-semibold text-foreground hover:bg-pos-hover"
         >
           <Lock size={13} /> Lock

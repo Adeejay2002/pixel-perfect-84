@@ -23,6 +23,7 @@ export function ReceiptBody({ sale }) {
       </div>
       <p>Payment: {sale.method}</p>
       {sale.cashierName && <p>Served by: {sale.cashierName}</p>}
+      {sale.comment && <p>Note: {sale.comment}</p>}
 
       {sale.refunded && <p className="font-bold">** REFUNDED **</p>}
       <div className="my-2 border-t border-dashed border-black" />

@@ -90,7 +90,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8"
   },
-  "version": "1.4.0",
+  "version": "1.7.0",
   "description": "Jnex POS system",
   "author": "Jnex Solution",
   "main": "electron/main.cjs",
