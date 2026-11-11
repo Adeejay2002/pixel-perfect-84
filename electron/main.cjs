@@ -373,12 +373,44 @@ if (!gotLock) {
   });
 }
 
+// Only accept the fields the settings window is meant to change.
+function sanitizeConfig(partial) {
+  const out = {};
+  if (partial && typeof partial.deviceName === "string") out.deviceName = partial.deviceName.slice(0, 256);
+  if (partial && (partial.paperWidthMm === 58 || partial.paperWidthMm === 80)) out.paperWidthMm = partial.paperWidthMm;
+  return out;
+}
+
 ipcMain.handle("printers:get-config", () => readConfig());
-ipcMain.handle("printers:set-config", (_evt, partial) => writeConfig(partial));
+ipcMain.handle("printers:set-config", (_evt, partial) => writeConfig(sanitizeConfig(partial)));
 ipcMain.handle("printers:list", async () => {
   if (!mainWindow) return [];
   const printers = await mainWindow.webContents.getPrintersAsync();
-  return printers.map((p) => ({ name: p.name, isDefault: p.isDefault }));
+  return printers.map((p) => ({ name: p.name, displayName: p.displayName, isDefault: p.isDefault }));
+});
+
+// "Test print" button in the printer settings window. Uses the values currently
+// selected in the form (even if not saved yet) so the shop can try before saving.
+ipcMain.handle("printers:test-print", async (_evt, partial) => {
+  const cfg = { ...readConfig(), ...sanitizeConfig(partial) };
+  const testSale = {
+    saleNo: "TEST",
+    date: new Date().toISOString(),
+    method: "Cash",
+    currency: "Rs",
+    shop: { name: "Printer test", address: "If you can read this, printing works" },
+    items: [
+      { name: "Test item A", qty: 1, unitPrice: 15000, price: 15000, lineTotal: 15000 },
+      { name: "Test item B", qty: 2, unitPrice: 5050, price: 5050, lineTotal: 10100 },
+    ],
+    subtotal: 25100,
+    tax: 0,
+    total: 25100,
+    tendered: 30000,
+    productDiscount: 0,
+    billDiscount: 0,
+  };
+  return printSaleSilently(testSale, cfg);
 });
 
 ipcMain.handle("data:load", () => {
@@ -423,32 +455,76 @@ ipcMain.handle("data:save-delta", (_evt, delta) => {
   }
 });
 
-function printSaleSilently(sale, cfg) {
-  return new Promise((resolve) => {
-    const { buildReceiptHtml } = require("./receipt-template.cjs");
-    const receiptWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
-    const html = buildReceiptHtml(sale, cfg.paperWidthMm || 80);
-    receiptWin
-      .loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html))
-      .then(() => {
-        receiptWin.webContents.print(
-          {
-            silent: true,
-            deviceName: cfg.deviceName || undefined,
-            margins: { marginType: "none" },
-            printBackground: true,
-          },
-          (success, errorType) => {
-            receiptWin.destroy();
-            resolve({ ok: success, error: success ? undefined : errorType });
-          },
-        );
-      })
-      .catch((e) => {
-        receiptWin.destroy();
-        resolve({ ok: false, error: String(e) });
-      });
+// Receipt window: hidden, normal (non-offscreen) rendering. `offscreen: true`
+// made some Windows printer drivers skip or crash the print job.
+function createReceiptWindow(widthMM) {
+  // Window width follows the roll width so layout (and measured height) match
+  // what is printed. 96 CSS px per inch.
+  const widthPx = Math.ceil(((widthMM || 80) / 25.4) * 96);
+  return new BrowserWindow({
+    show: false,
+    width: widthPx,
+    height: 800,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
+}
+
+// Content height in microns, so the page is exactly as long as the receipt
+// (a fixed A4-tall page would feed ~30cm of blank paper per bill).
+async function measureReceiptHeightMicrons(win) {
+  const px = await win.webContents.executeJavaScript(
+    `Promise.all(Array.from(document.images).map(i => i.decode ? i.decode().catch(() => {}) : null))
+       .then(() => Math.ceil(document.documentElement.scrollHeight))`,
+  );
+  const mm = ((Number(px) || 0) / 96) * 25.4;
+  // Chromium rejects tiny custom pages; keep a floor and round up to whole mm.
+  return Math.max(60, Math.ceil(mm) + 2) * 1000;
+}
+
+// Returns the Windows printer name to use, or an error if the saved printer
+// is no longer installed (renamed, driver removed, ...). An empty deviceName
+// means "system default printer".
+async function resolvePrinter(win, deviceName) {
+  let printers = [];
+  try {
+    printers = await win.webContents.getPrintersAsync();
+  } catch {
+    /* fall through: let print() decide */
+    return { ok: true, deviceName: deviceName || undefined };
+  }
+  if (!deviceName) return { ok: true, deviceName: undefined };
+  if (printers.some((p) => p.name === deviceName)) return { ok: true, deviceName };
+  return { ok: false, error: `Printer "${deviceName}" was not found. Check Printer > Select receipt printer…` };
+}
+
+async function printSaleSilently(sale, cfg) {
+  const { buildReceiptHtml } = require("./receipt-template.cjs");
+  const widthMM = cfg.paperWidthMm === 58 ? 58 : 80;
+  const receiptWin = createReceiptWindow(widthMM);
+  try {
+    const printer = await resolvePrinter(receiptWin, cfg.deviceName);
+    if (!printer.ok) return { ok: false, error: printer.error };
+
+    await receiptWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(buildReceiptHtml(sale, widthMM)));
+    const height = await measureReceiptHeightMicrons(receiptWin);
+
+    return await new Promise((resolve) => {
+      receiptWin.webContents.print(
+        {
+          silent: true,
+          deviceName: printer.deviceName,
+          margins: { marginType: "none" },
+          printBackground: true,
+          pageSize: { width: widthMM * 1000, height },
+        },
+        (success, errorType) => resolve({ ok: success, error: success ? undefined : errorType || "print-failed" }),
+      );
+    });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    if (!receiptWin.isDestroyed()) receiptWin.destroy();
+  }
 }
 
 // Fallback used if silent printing fails (e.g. no printer configured yet,

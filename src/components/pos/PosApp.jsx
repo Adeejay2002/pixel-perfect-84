@@ -13,7 +13,7 @@ import ReceiptModal from "./Receipt";
 import UpdateBanner from "./UpdateBanner";
 import CustomerPicker from "./CustomerPicker";
 import AlertsPanel from "./AlertsPanel";
-import { DialogProvider } from "./Dialog";
+import { DialogProvider, useDialog } from "./Dialog";
 
 function Toast() {
   const { toast } = usePos();
@@ -28,7 +28,8 @@ function Toast() {
 }
 
 function Workspace() {
-  const { session, hydrated, holdSale, newSale, receipt, setReceipt, toggleBillDiscount, stockAlerts, showToast } = usePos();
+  const { session, hydrated, holdSale, newSale, receipt, setReceipt, toggleBillDiscount, stockAlerts, showToast, settings, setOwnerPasscode } = usePos();
+  const dialog = useDialog();
   const [payment, setPayment] = useState(false);
   const [menu, setMenu] = useState(false);
   const [module, setModule] = useState(null);
@@ -61,6 +62,39 @@ function Workspace() {
     if (parts.length) showToast(`Stock alerts: ${parts.join(", ")}`, "info");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, hydrated]);
+
+  // First owner login while the owner passcode is still the factory default:
+  // ask for a new one right away. Cancelling is allowed (the shop can keep
+  // selling) but the question comes back on the next owner login.
+  const passcodePromptedRef = useRef(false);
+  useEffect(() => {
+    if (!session || session.role !== "owner" || !hydrated) {
+      passcodePromptedRef.current = false;
+      return;
+    }
+    if (settings.ownerPasscodeChanged || passcodePromptedRef.current) return;
+    passcodePromptedRef.current = true;
+    (async () => {
+      let message = "The owner passcode is still the default. Choose a new one (digits only, at least 4).";
+      for (;;) {
+        const code = await dialog.prompt({
+          title: "Set a new owner passcode",
+          message,
+          placeholder: "New owner passcode",
+          inputType: "password",
+          maxLength: 24,
+        });
+        if (code === null) return; // cancelled: ask again next login
+        if (/^\d{4,24}$/.test(code)) {
+          setOwnerPasscode(code);
+          showToast("Owner passcode updated");
+          return;
+        }
+        message = "Use digits only, at least 4. Try again.";
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, hydrated, settings.ownerPasscodeChanged]);
 
   useEffect(() => {
     // capture phase so the shortcuts fire even while the search input has focus
