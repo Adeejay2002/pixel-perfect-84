@@ -27,6 +27,36 @@ function Toast() {
   );
 }
 
+function ChangeBanner() {
+  const { changeDue, dismissChange } = usePos();
+  useEffect(() => {
+    if (!changeDue) return undefined;
+    const t = setTimeout(dismissChange, 15000);
+    // any key or click starts the next sale and clears the banner (never blocks the key)
+    const onKey = () => dismissChange();
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [changeDue, dismissChange]);
+  if (!changeDue) return null;
+  return (
+    <div
+      className="pos-no-print fixed inset-x-0 top-1/3 z-[65] flex justify-center px-4"
+      onMouseDown={dismissChange}
+    >
+      <div className="rounded-xl border border-pos-border bg-pos-panel px-12 py-6 text-center shadow-2xl">
+        <p className="text-xs uppercase tracking-wider text-muted-foreground">Change · Bill #{changeDue.saleNo}</p>
+        <p className="mt-1 text-5xl font-bold text-pos-green">
+          {changeDue.currency || "Rs"} {(changeDue.amount / 100).toFixed(2)}
+        </p>
+        <p className="mt-2 text-[11px] text-muted-foreground">Press any key to continue</p>
+      </div>
+    </div>
+  );
+}
+
 function Workspace() {
   const { session, hydrated, holdSale, newSale, receipt, setReceipt, toggleBillDiscount, stockAlerts, showToast, settings, setOwnerPasscode } = usePos();
   const dialog = useDialog();
@@ -165,6 +195,7 @@ function Workspace() {
       <MenuDrawer open={menu} onClose={() => setMenu(false)} onSelect={setModule} />
       <Modules active={module} onClose={() => setModule(null)} onOpenReceipt={setReceipt} />
       {receipt && <ReceiptModal sale={receipt} onClose={() => setReceipt(null)} />}
+      <ChangeBanner />
       <Toast />
     </div>
   );

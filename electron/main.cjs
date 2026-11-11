@@ -8,6 +8,10 @@ const { createUpdater } = require("./updater.cjs");
 const drawer = require("./drawer.cjs");
 const restoreTools = require("./restore.cjs");
 
+// Driver-mode printing: older thermal drivers can't take Chromium's XPS print
+// path and print garbage. No effect if the feature doesn't exist.
+app.commandLine.appendSwitch("disable-features", "UseXpsForPrinting");
+
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.ELECTRON_START_URL || "http://localhost:5173";
 
@@ -272,7 +276,7 @@ function createSettingsWindow() {
   }
   settingsWindow = new BrowserWindow({
     width: 420,
-    height: 420,
+    height: 520,
     parent: mainWindow || undefined,
     resizable: false,
     title: "Receipt printer settings",
@@ -378,6 +382,7 @@ function sanitizeConfig(partial) {
   const out = {};
   if (partial && typeof partial.deviceName === "string") out.deviceName = partial.deviceName.slice(0, 256);
   if (partial && (partial.paperWidthMm === 58 || partial.paperWidthMm === 80)) out.paperWidthMm = partial.paperWidthMm;
+  if (partial && (["escpos", "text", "driver"].includes(partial.printMode))) out.printMode = partial.printMode;
   return out;
 }
 
@@ -410,7 +415,7 @@ ipcMain.handle("printers:test-print", async (_evt, partial) => {
     productDiscount: 0,
     billDiscount: 0,
   };
-  return printSaleSilently(testSale, cfg);
+  return printSale(testSale, cfg);
 });
 
 ipcMain.handle("data:load", () => {
@@ -497,6 +502,112 @@ async function resolvePrinter(win, deviceName) {
   return { ok: false, error: `Printer "${deviceName}" was not found. Check Printer > Select receipt printer…` };
 }
 
+// ESC/POS image mode (default on Windows): the receipt is rendered, turned into
+// a 1-bit raster and sent straight to the print queue as RAW data. This avoids
+// Chromium's own print path, which makes some thermal drivers (e.g. Xprinter
+// XP-80) spit out pages of garbage characters.
+async function printSaleEscPos(sale, cfg) {
+  const { buildReceiptHtml } = require("./receipt-template.cjs");
+  const escpos = require("./escpos.cjs");
+  const paper = cfg.paperWidthMm === 58 ? 58 : 80;
+  const dots = escpos.dotsForPaper(paper);
+  const cssWidth = (escpos.printableMm(paper) / 25.4) * 96;
+  const zoom = dots / cssWidth; // render large so text is sharp at 203 dpi
+
+  // offscreen rendering is what makes capturePage reliable for a hidden window
+  const win = new BrowserWindow({
+    show: false,
+    width: dots,
+    height: 800,
+    useContentSize: true,
+    webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  try {
+    const printerName = await resolveEscPosPrinter(win, cfg.deviceName);
+    if (!printerName.ok) return { ok: false, error: printerName.error, fatal: true };
+
+    await win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(buildReceiptHtml(sale, escpos.printableMm(paper))));
+    win.webContents.setZoomFactor(zoom);
+    const cssHeight = await win.webContents.executeJavaScript(
+      `Promise.all(Array.from(document.images).map(i => i.decode ? i.decode().catch(() => {}) : null))
+         .then(() => Math.ceil(document.documentElement.scrollHeight))`,
+    );
+    win.setContentSize(dots, Math.min(12000, Math.max(100, Math.ceil(cssHeight * zoom) + 8)));
+    await new Promise((r) => setTimeout(r, 400)); // let the resized page paint
+
+    let img = await win.webContents.capturePage();
+    if (img.isEmpty()) return { ok: false, error: "Could not render the receipt" };
+    if (img.getSize().width !== dots) img = img.resize({ width: dots, quality: "best" }); // display scaling
+    const { width, height } = img.getSize();
+    const { mono, bytesPerRow } = escpos.bgraToMono(img.toBitmap(), width, height);
+    const trimmed = escpos.trimBottom(mono, bytesPerRow, height);
+    if (trimmed.height === 0) return { ok: false, error: "Receipt rendered blank" };
+
+    const job = escpos.buildRasterJob(trimmed.mono, bytesPerRow, trimmed.height);
+    return await drawer.sendRaw({ printerName: printerName.deviceName, data: job, scriptDir: app.getPath("userData") });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    if (!win.isDestroyed()) win.destroy();
+  }
+}
+
+// RAW printing needs a real queue name, so "system default" is resolved here.
+async function resolveEscPosPrinter(win, deviceName) {
+  let printers = [];
+  try {
+    printers = await win.webContents.getPrintersAsync();
+  } catch {
+    /* handled below */
+  }
+  if (deviceName) {
+    if (printers.length && !printers.some((p) => p.name === deviceName)) {
+      return { ok: false, error: `Printer "${deviceName}" was not found. Check Printer > Select receipt printer…` };
+    }
+    return { ok: true, deviceName };
+  }
+  const def = printers.find((p) => p.isDefault) || printers[0];
+  if (!def) return { ok: false, error: "No printer found. Choose one under Printer > Select receipt printer…" };
+  return { ok: true, deviceName: def.name };
+}
+
+// ESC/POS text mode: no rendering at all, plain 48/32-column receipt. English
+// only (Sinhala shows as "?"), but works even if image rendering ever fails.
+async function printSaleEscPosText(sale, cfg) {
+  try {
+    const escpos = require("./escpos.cjs");
+    if (!mainWindow) return { ok: false, error: "No window" };
+    const printer = await resolveEscPosPrinter(mainWindow, cfg.deviceName);
+    if (!printer.ok) return { ok: false, error: printer.error, fatal: true };
+    const job = escpos.buildTextJob(sale, cfg.paperWidthMm === 58 ? 58 : 80);
+    return await drawer.sendRaw({ printerName: printer.deviceName, data: job, scriptDir: app.getPath("userData") });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+// printMode: "escpos" (image, default on Windows) | "text" | "driver".
+// ESC/POS modes fall back to each other; they never fall back to "driver",
+// because a driver that cannot take Chromium's output prints pages of junk.
+// If everything fails the caller offers the manual print dialog.
+async function printSale(sale, cfg) {
+  const win32 = process.platform === "win32";
+  const mode = cfg.printMode || (win32 ? "escpos" : "driver");
+  const chain =
+    !win32 || mode === "driver"
+      ? [printSaleSilently]
+      : mode === "text"
+        ? [printSaleEscPosText, printSaleEscPos]
+        : [printSaleEscPos, printSaleEscPosText];
+  let last = { ok: false, error: "No print method available" };
+  for (const method of chain) {
+    last = await method(sale, cfg);
+    if (last.ok || last.fatal) return last;
+    console.error(`Print method ${method.name} failed:`, last.error);
+  }
+  return last;
+}
+
 async function printSaleSilently(sale, cfg) {
   const { buildReceiptHtml } = require("./receipt-template.cjs");
   const widthMM = cfg.paperWidthMm === 58 ? 58 : 80;
@@ -567,16 +678,24 @@ ipcMain.handle("drawer:open", () => openDrawerFromConfig());
 ipcMain.handle("print:receipt", async (_evt, sale) => {
   if (!mainWindow) return { ok: false, error: "No window" };
   const cfg = readConfig();
-  const result = await printSaleSilently(sale, cfg);
+  const driverMode = process.platform !== "win32" || cfg.printMode === "driver";
+  let result = await printSale(sale, cfg);
   if (!result.ok) {
+    // ESC/POS modes: the manual Windows print dialog would send the bill through
+    // Chromium's print path, which is the one that can print garbage on thermal
+    // printers, so only offer a retry. Driver mode keeps the manual dialog.
+    const buttons = driverMode ? ["Open print dialog", "Cancel"] : ["Try again", "Cancel"];
     const fallback = await dialog.showMessageBox(mainWindow, {
       type: "warning",
-      buttons: ["Open print dialog", "Cancel"],
+      buttons,
       defaultId: 0,
-      message: "Couldn't print silently to the configured printer.",
-      detail: "Check Printer > Select receipt printer…, or print manually now.",
+      message: "Couldn't print the receipt.",
+      detail: `${result.error ? result.error + "\n\n" : ""}Check that the printer is on, has paper and is connected, or choose it under Printer > Select receipt printer…`,
     });
-    if (fallback.response === 0) return printSaleWithDialog(sale, cfg);
+    if (fallback.response === 0) {
+      if (driverMode) return printSaleWithDialog(sale, cfg);
+      result = await printSale(sale, cfg);
+    }
   }
   return result;
 });

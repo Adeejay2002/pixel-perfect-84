@@ -12,7 +12,8 @@ const path = require("path");
 
 const PS_SCRIPT = String.raw`param(
   [Parameter(Mandatory = $true)][string]$PrinterName,
-  [Parameter(Mandatory = $true)][string]$Hex
+  [string]$Hex,
+  [string]$DataFile
 )
 $ErrorActionPreference = "Stop"
 Add-Type -TypeDefinition @"
@@ -44,7 +45,7 @@ public static class JnexRawPrinter {
     IntPtr h;
     if (!OpenPrinter(printer, out h, IntPtr.Zero)) return "Printer not found or not accessible (error " + Marshal.GetLastWin32Error() + ")";
     DOCINFOA di = new DOCINFOA();
-    di.pDocName = "Cash drawer";
+    di.pDocName = "Jnex POS";
     di.pDataType = "RAW";
     string err = null;
     if (StartDocPrinter(h, 1, di)) {
@@ -67,8 +68,12 @@ public static class JnexRawPrinter {
   }
 }
 "@
-$bytes = New-Object byte[] ($Hex.Length / 2)
-for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($Hex.Substring($i * 2, 2), 16) }
+if ($DataFile) {
+  $bytes = [System.IO.File]::ReadAllBytes($DataFile)
+} else {
+  $bytes = New-Object byte[] ($Hex.Length / 2)
+  for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($Hex.Substring($i * 2, 2), 16) }
+}
 $result = [JnexRawPrinter]::Send($PrinterName, $bytes)
 if ($result) { [Console]::Error.WriteLine($result); exit 2 }
 exit 0
@@ -79,14 +84,27 @@ function pulseHex(pin) {
   return `1B70${pin === 1 ? "01" : "00"}19FA`;
 }
 
+// Writes the helper script only if it is missing or different, so two jobs
+// started back to back never rewrite a file PowerShell is currently reading.
+function ensureScript(scriptDir) {
+  fs.mkdirSync(scriptDir, { recursive: true });
+  const scriptPath = path.join(scriptDir, "open-drawer.ps1");
+  let current = null;
+  try {
+    current = fs.readFileSync(scriptPath, "utf8");
+  } catch {
+    /* not there yet */
+  }
+  if (current !== PS_SCRIPT) fs.writeFileSync(scriptPath, PS_SCRIPT, "utf8");
+  return scriptPath;
+}
+
 function openDrawer({ printerName, pin = 0, scriptDir, exec = execFile }) {
   return new Promise((resolve) => {
     try {
       if (!printerName) return resolve({ ok: false, error: "No receipt printer selected" });
-      fs.mkdirSync(scriptDir, { recursive: true });
-      const scriptPath = path.join(scriptDir, "open-drawer.ps1");
-      // rewritten each time so an app update can never leave an old script behind
-      fs.writeFileSync(scriptPath, PS_SCRIPT, "utf8");
+      // refreshed whenever it differs, so an app update never leaves an old script behind
+      const scriptPath = ensureScript(scriptDir);
       exec(
         "powershell.exe",
         ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-PrinterName", String(printerName), "-Hex", pulseHex(pin)],
@@ -103,4 +121,36 @@ function openDrawer({ printerName, pin = 0, scriptDir, exec = execFile }) {
   });
 }
 
-module.exports = { openDrawer, pulseHex, PS_SCRIPT };
+// Sends arbitrary raw bytes (e.g. an ESC/POS receipt) to the Windows print queue.
+// The bytes go through a temp file because a raster receipt is far too big for
+// a command line.
+function sendRaw({ printerName, data, scriptDir, exec = execFile }) {
+  return new Promise((resolve) => {
+    let dataPath = null;
+    const cleanup = () => {
+      if (dataPath) fs.rm(dataPath, { force: true }, () => {});
+    };
+    try {
+      if (!printerName) return resolve({ ok: false, error: "No receipt printer selected" });
+      const scriptPath = ensureScript(scriptDir);
+      dataPath = path.join(scriptDir, `raw-job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.bin`);
+      fs.writeFileSync(dataPath, data);
+      exec(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-PrinterName", String(printerName), "-DataFile", dataPath],
+        { windowsHide: true, timeout: 30000 },
+        (err, _stdout, stderr) => {
+          cleanup();
+          if (!err) return resolve({ ok: true });
+          const detail = String(stderr || "").trim().split(/\r?\n/)[0] || (err && err.message) || "failed";
+          resolve({ ok: false, error: detail });
+        },
+      );
+    } catch (e) {
+      cleanup();
+      resolve({ ok: false, error: String((e && e.message) || e) });
+    }
+  });
+}
+
+module.exports = { openDrawer, sendRaw, pulseHex, PS_SCRIPT };

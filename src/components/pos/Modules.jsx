@@ -918,6 +918,15 @@ function Settings({ onClose }) {
             className="h-9 w-full rounded border border-pos-border bg-pos-panel px-3 text-sm text-foreground outline-none"
           />
           <p className="mt-1 text-[11px] text-muted-foreground">Minutes of inactivity before re-lock.</p>
+          <label className="mt-4 flex items-center gap-2 text-xs text-foreground">
+            <input
+              type="checkbox"
+              checked={!!settings.receiptScreenAfterSale}
+              onChange={(e) => updateSettings({ receiptScreenAfterSale: e.target.checked })}
+            />
+            Show receipt screen after each sale (desktop app)
+          </label>
+          <p className="mt-1 text-[11px] text-muted-foreground">Off: the bill prints and the next sale starts at once; change is shown on screen.</p>
           <p className="mt-4 mb-2 text-sm font-semibold text-foreground">Tax rate</p>
           <input
             type="number"

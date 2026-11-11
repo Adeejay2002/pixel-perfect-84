@@ -67,18 +67,37 @@ export function ReceiptBody({ sale }) {
 }
 
 export default function ReceiptModal({ sale, onClose }) {
-  const { canSeeCost } = usePos();
+  const { canSeeCost, showToast } = usePos();
+  const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
+
+  // Desktop app: use the same silent printer path as the automatic print after
+  // payment (window.print() goes through Chromium's own print path, which gives
+  // garbage on some thermal printers). Browser: normal window.print().
+  const printNow = async () => {
+    if (!desktopPrint) return window.print();
+    try {
+      const r = await desktopPrint(sale);
+      if (r && !r.ok) showToast(`Print failed${r.error ? ` — ${r.error}` : ""}`, "error");
+    } catch (err) {
+      showToast(`Print failed — ${String((err && err.message) || err)}`, "error");
+    }
+    return undefined;
+  };
 
   useEffect(() => {
     if (!sale) return undefined;
     const onKey = (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        window.print();
+        // Desktop app: the bill was already printed when payment was confirmed,
+        // so Enter just closes this screen (use the button to reprint).
+        if (desktopPrint) onClose();
+        else window.print();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sale]);
 
   if (!sale) return null;
@@ -109,7 +128,7 @@ export default function ReceiptModal({ sale, onClose }) {
           </button>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={printNow}
             className="flex h-10 items-center justify-center gap-2 rounded-md bg-pos-green text-xs font-semibold text-black"
           >
             <Printer size={14} /> Print receipt

@@ -20,6 +20,7 @@ const defaultSettings = () => ({
   cashierPasscodeChanged: false,
   cashiers: [{ id: "ca1", name: "Cashier 1", passcodeHash: hashCode(DEFAULT_CASHIER_PASSCODE) }],
   idleMinutes: 5,
+  receiptScreenAfterSale: false, // desktop app: open the receipt screen after each sale (default: straight to next sale)
   taxRate: 0.08,
   currency: "Rs",
   shopName: "Nimal's Grocery",
@@ -180,6 +181,9 @@ export function PosProvider({ children }) {
   const [billDiscountOn, setBillDiscountOn] = useState(false);
   const [toast, setToast] = useState(null);
   const [receipt, setReceipt] = useState(null);
+  // Cash change shown big after a sale when the receipt screen is skipped
+  const [changeDue, setChangeDue] = useState(null);
+  const dismissChange = useCallback(() => setChangeDue(null), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -551,13 +555,24 @@ export function PosProvider({ children }) {
           return q ? { ...p, stock: Math.max(0, p.stock - q) } : p;
         }),
       }));
-      if (typeof window !== "undefined" && window.posHardware?.printReceipt) {
-        window.posHardware.printReceipt(payload);
+      const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
+      if (desktopPrint) {
+        // never let a printer problem break the sale (the main process already
+        // offers the manual print dialog when printing fails)
+        Promise.resolve(desktopPrint(payload)).catch(() => {});
       }
       setLines([]);
       setBillDiscountOn(false);
       setComment("");
-      setReceipt(payload);
+      // Desktop app: the bill is already printing, so go straight to the next
+      // sale (change is shown in a banner). The receipt screen opens only in a
+      // browser, or when "Show receipt screen after each sale" is switched on.
+      const showReceiptScreen = !desktopPrint || db.settings.receiptScreenAfterSale === true;
+      if (showReceiptScreen) {
+        setReceipt(payload);
+      } else if (method === "Cash" && tendered > payload.total) {
+        setChangeDue({ amount: tendered - payload.total, currency: payload.currency, saleNo: payload.saleNo, at: Date.now() });
+      }
       showToast(
         method === "Account"
           ? `Charged to ${payload.customerName}'s account`
@@ -1070,6 +1085,8 @@ export function PosProvider({ children }) {
     refundSaleItem,
     receipt,
     setReceipt,
+    changeDue,
+    dismissChange,
     customerId,
     setCustomerId,
     updateProduct,

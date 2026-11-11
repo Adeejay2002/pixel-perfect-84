@@ -52,6 +52,14 @@
     <option value="58">58mm</option>
   </select>
 
+  <label for="mode">Print mode</label>
+  <select id="mode">
+    <option value="escpos">ESC/POS image (recommended for Xprinter)</option>
+    <option value="text">ESC/POS text (English only, fastest)</option>
+    <option value="driver">Windows driver</option>
+  </select>
+  <p class="hint">If receipts print as garbage characters, use ESC/POS image or text. If one fails, the other is tried automatically.</p>
+
   <button id="save">Save</button>
   <button id="test" class="secondary">Test print</button>
   <div id="status"></div>
@@ -75,12 +83,14 @@
       }
       printerSel.value = cfg.deviceName || "";
       document.getElementById("width").value = String(cfg.paperWidthMm || 80);
+      document.getElementById("mode").value = cfg.printMode || "escpos";
     }
 
     function formValues() {
       return {
         deviceName: document.getElementById("printer").value,
         paperWidthMm: Number(document.getElementById("width").value),
+        printMode: document.getElementById("mode").value,
       };
     }
     function showStatus(text, isError) {
