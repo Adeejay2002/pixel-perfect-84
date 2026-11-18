@@ -141,6 +141,7 @@ function buildTextJob(sale, paperWidthMm, { feedLines = 4, cut = true } = {}) {
   sep();
   align(1);
   text("Thank you for your purchase!");
+  text("Powered by Jnex Software Solution");
   align(0);
   raw(0x1b, 0x64, feedLines);
   if (cut) raw(0x1d, 0x56, 0x01);

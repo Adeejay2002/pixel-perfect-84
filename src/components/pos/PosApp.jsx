@@ -14,6 +14,7 @@ import UpdateBanner from "./UpdateBanner";
 import CustomerPicker from "./CustomerPicker";
 import AlertsPanel from "./AlertsPanel";
 import { DialogProvider, useDialog } from "./Dialog";
+import LicenseGate from "./LicenseGate";
 
 function Toast() {
   const { toast } = usePos();
@@ -203,11 +204,13 @@ function Workspace() {
 
 export default function PosApp() {
   return (
-    <PosProvider>
-      <DialogProvider>
-        <Workspace />
-        <UpdateBanner />
-      </DialogProvider>
-    </PosProvider>
+    <LicenseGate>
+      <PosProvider>
+        <DialogProvider>
+          <Workspace />
+          <UpdateBanner />
+        </DialogProvider>
+      </PosProvider>
+    </LicenseGate>
   );
 }

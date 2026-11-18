@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { X, Printer } from "lucide-react";
 import { usePos, money } from "../../lib/pos/store";
-import { BRAND_FOOTER } from "../../lib/pos/config";
+import { RECEIPT_FOOTER } from "../../lib/pos/config";
 
 export function ReceiptBody({ sale }) {
   const c = sale.currency || "Rs";
@@ -61,7 +61,7 @@ export function ReceiptBody({ sale }) {
       )}
       <div className="my-2 border-t border-dashed border-black" />
       <p className="text-center">Thank you for your purchase!</p>
-      <p className="mt-1 text-center text-[8px] font-normal text-gray-500">{BRAND_FOOTER}</p>
+      <p className="mt-1 text-center text-[8px] font-normal text-gray-500">{RECEIPT_FOOTER}</p>
     </div>
   );
 }

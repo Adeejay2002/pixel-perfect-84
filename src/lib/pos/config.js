@@ -1,5 +1,6 @@
 export const APP_NAME = "Jnex POS system";
 export const BRAND_FOOTER = "Powered by Jnex";
+export const RECEIPT_FOOTER = "Powered by Jnex Software Solution";
 
 export const DEFAULT_OWNER_PASSCODE = "8888";
 export const DEFAULT_CASHIER_PASSCODE = "0000";

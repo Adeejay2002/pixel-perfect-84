@@ -119,7 +119,7 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
   ${cashBlock}
   <div class="hr"></div>
   <p class="center">Thank you for your purchase!</p>
-  <p class="footer">Printed ${esc(new Date().toLocaleString())}</p>
+  <p class="footer">Powered by Jnex Software Solution</p>
 </body>
 </html>`;
 }

@@ -38,3 +38,8 @@ contextBridge.exposeInMainWorld("posBackups", {
   restore: (name, actor) => ipcRenderer.invoke("backups:restore", name, actor),
   openFolder: () => ipcRenderer.invoke("backups:open-folder"),
 });
+
+contextBridge.exposeInMainWorld("posLicense", {
+  status: () => ipcRenderer.invoke("license:status"),
+  activate: (code) => ipcRenderer.invoke("license:activate", code),
+});

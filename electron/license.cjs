@@ -1,138 +1,193 @@
-const { app } = require("electron");
-const path = require("path");
-const fs = require("fs");
-const crypto = require("crypto");
-
-// ---------------------------------------------------------------------------
-// 3-day free trial + lifetime activation code.
+// Jnex POS licence / activation lock (runs in the Electron main process).
 //
-// Kept in the MAIN process on purpose (not the renderer): the renderer's JS
-// runs in a window a determined user could inspect/patch with devtools, but
-// this file only ever gets touched by rebuilding + repackaging the app. All
-// trial state lives here; the UI only ever asks "am I expired?" / "activate
-// with this code" over IPC and never sees or sets the underlying dates.
-// ---------------------------------------------------------------------------
+// - Trial: locks 3 days after the first run.
+// - Then each activation code unlocks for 30 days. Codes are used strictly in
+//   order (CODES[0] = first unlock, CODES[1] = month 1, ...). Each works once.
+// - Only SHA-256 hashes of the codes are stored here, never the codes.
+// - State is HMAC-signed and kept in 3 places (userData, ProgramData/home,
+//   Windows registry). Deleting one copy does nothing: the most advanced valid
+//   copy wins and the others are re-created. Wiping everything while pos.db
+//   still exists counts as an expired trial, not a fresh one.
+// - Clock rollback is detected (last-seen time only moves forward).
+const { app } = require("electron");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const crypto = require("crypto");
+const { execFileSync } = require("child_process");
 
-const TRIAL_DAYS = 3;
-const ACTIVATION_CODE = "J8K2-M9F4-X3L7-R5W1"; // deliberately separate from SUPER_ADMIN_PASSCODE
-const SIGNING_KEY = "jnex-pos::trial-anchor::v1";
+const DAY = 86400000;
+const TRIAL_MS = 3 * DAY;
+const PERIOD_MS = 30 * DAY;
+const SAVE_EVERY_MS = 60 * 1000;
+const SALT = "jnex-lic-v1:";
+const HMAC_KEY = "jnx|pos|9f2c41e7a85b3d60|lic1";
+const REG_KEY = "HKCU\\Software\\Jnex\\POS";
 
-function sign(json) {
-  return crypto.createHmac("sha256", SIGNING_KEY).update(json).digest("hex");
+const CODE_HASHES = [
+  "3305fcf6fb8fac302b3d15ad4e6d110335a13638f7df324bba98b013d9006c2d",
+  "dfca74e26e50996719a0536dd56a8b1ee70968201ca6f44d74957d4f577bb78d",
+  "a1d1bef04b715389732248a99f45375d4016fe303fcd58eef6963a912b97d4a6",
+  "bb604db6624e266ace68fd484a709c2c1342f99eaeef50cde40393a290cd1a5c",
+  "a138d1aa4fbdab2ec5b50956ad6b5706dfc04fbfe2e5c69bf4bb4b72cdca9e17",
+  "33e6cd2d0f3518ae2383d524e11733b00ff69c0449be8f00b2a1f5f07abd4602",
+  "df47e8f84b2a387a5f038aed11bfbb4fe1cafd82fe33b9c02423efd6fbba6349",
+  "c54d17b7ea6be63adec3ad814de3e82671fbd2191db6def7ee3c9e6d9643e8bf",
+  "baf34afde6a8ba7be275d1707b5fb9cfd4a910a71fb59df351cc8baa38eafcdf",
+  "085538c3831b68efa4780139ebf797b55ba76c6d6a3d3d8f10cad9193cdd91f9",
+  "56153945afdbf2970a1cf95b43227ea3a8253b8a59d629172a659bac7e3a9d1d",
+  "210b49b8b4548381999a481a32e560c254f64458d9095f538ce9a92747abc71e",
+  "98c2cb94b0320501fc8b41e8717190ff97ad73f0260ec4ecb0c8b56422984ab6",
+  "5042ae5839700ce90ab30896abee00ec4daa407ff402f782547d32cb737fefa1",
+  "7c858762ef69c11eb661d64349cb56d25f16c4dc6bd436d3abacfcb04a31c71c"
+];
+
+const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
+const normalize = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const sign = (o) =>
+  crypto.createHmac("sha256", HMAC_KEY).update(`${o.installedAt}|${o.lastSeen}|${o.step}|${o.validUntil}`).digest("hex");
+
+let state = null;
+let lastSaved = 0;
+let failCount = 0;
+let blockedUntil = 0;
+
+function locations() {
+  const list = [path.join(app.getPath("userData"), "license.dat")];
+  const base = process.env.ProgramData || path.join(os.homedir(), ".config");
+  list.push(path.join(base, "JnexPOS", "sys.dat"));
+  return list;
 }
 
-// Light obfuscation + a signature so the marker file isn't a plain-text date
-// someone can hand-edit in Notepad to "reset" the trial. Not meant to be
-// unbreakable — just to raise the bar past a trivial edit.
-function encode(record) {
-  const json = JSON.stringify(record);
-  const body = Buffer.from(json, "utf8").toString("base64");
-  return Buffer.from(JSON.stringify({ b: body, s: sign(json) }), "utf8").toString("base64");
-}
-
-function decode(raw) {
+function parse(raw) {
   try {
-    const { b, s } = JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
-    const json = Buffer.from(b, "base64").toString("utf8");
-    if (sign(json) !== s) return null; // signature mismatch → tampered, ignore it
-    const record = JSON.parse(json);
-    if (typeof record.installedAt !== "number" || typeof record.lastSeenAt !== "number")
-      return null;
-    return record;
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object") return null;
+    for (const k of ["installedAt", "lastSeen", "step", "validUntil"]) if (!Number.isFinite(o[k])) return null;
+    if (o.sig !== sign(o)) return null;
+    return o;
   } catch {
     return null;
   }
 }
 
-// Two independent locations so deleting/clearing app data from inside the
-// app (or wiping just the normal userData folder) can't reset the trial —
-// both would have to be found and removed by hand.
-function markerPaths() {
-  return [
-    path.join(app.getPath("userData"), "sys.dat"),
-    path.join(app.getPath("documents"), "JnexPOS", ".cache", "sys.dat"),
-  ];
-}
-
-function readMarker(p) {
-  try {
-    return decode(fs.readFileSync(p, "utf8"));
-  } catch {
-    return null;
+function readAll() {
+  const found = [];
+  for (const p of locations()) {
+    try {
+      const o = parse(fs.readFileSync(p, "utf8"));
+      if (o) found.push(o);
+    } catch { /* missing */ }
   }
-}
-
-function writeMarker(p, record) {
-  try {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    const tmp = p + ".tmp";
-    fs.writeFileSync(tmp, encode(record), "utf8");
-    fs.renameSync(tmp, p);
-  } catch {
-    /* best-effort — if one location is unwritable the other still protects the trial */
+  if (process.platform === "win32") {
+    try {
+      const out = execFileSync("reg", ["query", REG_KEY, "/v", "d"], { encoding: "utf8", windowsHide: true, timeout: 4000 });
+      const m = out.match(/REG_SZ\s+(\S+)/);
+      if (m) {
+        const o = parse(Buffer.from(m[1], "base64").toString("utf8"));
+        if (o) found.push(o);
+      }
+    } catch { /* missing */ }
   }
+  return found;
 }
 
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
-function computeAndPersist() {
-  const paths = markerPaths();
-  const records = paths.map(readMarker).filter(Boolean);
-  const now = nowSec();
-
-  let installedAt;
-  let lastSeenAt;
-  let activated;
-
-  if (records.length === 0) {
-    // No valid marker anywhere → first launch ever seen (or every marker
-    // was removed/corrupted). Anchor the trial starting now.
-    installedAt = now;
-    lastSeenAt = now;
-    activated = false;
-  } else {
-    // Earliest installedAt across whatever markers survived wins, so
-    // removing just one of the two files doesn't restart the clock.
-    installedAt = Math.min(...records.map((r) => r.installedAt));
-    // Latest lastSeenAt we've ever recorded wins too — this is the
-    // anti-clock-rollback guard below.
-    lastSeenAt = Math.max(...records.map((r) => r.lastSeenAt), installedAt);
-    activated = records.some((r) => r.activated === true);
+function writeAll(o) {
+  const raw = JSON.stringify(o);
+  for (const p of locations()) {
+    try {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, raw);
+    } catch { /* ignore */ }
   }
+  if (process.platform === "win32") {
+    try {
+      execFileSync("reg", ["add", REG_KEY, "/v", "d", "/t", "REG_SZ", "/d", Buffer.from(raw).toString("base64"), "/f"], {
+        windowsHide: true, timeout: 4000, stdio: "ignore",
+      });
+    } catch { /* ignore */ }
+  }
+  lastSaved = Date.now();
+}
 
-  // If the system clock now reads earlier than the latest time we've
-  // already observed, someone (or something) turned it back. Don't let
-  // that rewind the trial — treat "now" as the latest time we've seen.
-  const effectiveNow = Math.max(now, lastSeenAt);
+function seal(o) {
+  const out = { installedAt: o.installedAt, lastSeen: o.lastSeen, step: o.step, validUntil: o.validUntil };
+  out.sig = sign(out);
+  return out;
+}
 
-  const record = { installedAt, lastSeenAt: effectiveNow, activated };
-  paths.forEach((p) => writeMarker(p, record));
+function best(list) {
+  return list.reduce((a, b) =>
+    !a ? b : b.step > a.step || (b.step === a.step && b.lastSeen > a.lastSeen) ? b : a, null);
+}
 
-  const elapsedDays = (effectiveNow - installedAt) / 86400;
-  const expired = !activated && elapsedDays >= TRIAL_DAYS;
+function init() {
+  const found = readAll();
+  let s = best(found);
+  const now = Date.now();
+  if (!s) {
+    // No valid licence data anywhere. If the shop database already exists this
+    // is not a first install (files were deleted/edited): trial is used up.
+    let installedAt = now;
+    try {
+      const st = fs.statSync(path.join(app.getPath("userData"), "pos.db"));
+      if (now - st.birthtimeMs > 10 * 60 * 1000) installedAt = Math.min(st.birthtimeMs, now - TRIAL_MS - 1);
+    } catch { /* fresh install */ }
+    s = seal({ installedAt, lastSeen: now, step: 0, validUntil: installedAt + TRIAL_MS });
+  }
+  state = s;
+  tick(true);
+}
 
+function effectiveNow() {
+  return Math.max(Date.now(), state ? state.lastSeen : 0);
+}
+
+function tick(force) {
+  if (!state) return;
+  const now = effectiveNow();
+  const moved = now > state.lastSeen;
+  if (moved) state = seal({ ...state, lastSeen: now });
+  const missing = readAll().length < 2;
+  if (force || missing || (moved && Date.now() - lastSaved > SAVE_EVERY_MS)) writeAll(state);
+}
+
+function getStatus() {
+  if (!state) init();
+  tick(false);
+  const now = effectiveNow();
+  const remainingMs = Math.max(0, state.validUntil - now);
   return {
-    activated,
-    expired,
-    daysRemaining: activated ? null : Math.max(0, Math.ceil(TRIAL_DAYS - elapsedDays)),
+    locked: remainingMs === 0,
+    remainingMs,
+    validUntil: state.validUntil,
+    trial: state.step === 0,
+    exhausted: state.step >= CODE_HASHES.length,
+    blockedSeconds: Math.max(0, Math.ceil((blockedUntil - Date.now()) / 1000)),
   };
 }
 
-function getLicenseState() {
-  return computeAndPersist();
+function isLocked() {
+  try { return getStatus().locked; } catch { return true; }
 }
 
 function activate(code) {
-  if (String(code || "").trim() !== ACTIVATION_CODE) return { ok: false };
-  const paths = markerPaths();
-  const existing = paths.map(readMarker).filter(Boolean);
-  const now = nowSec();
-  const installedAt = existing.length ? Math.min(...existing.map((r) => r.installedAt)) : now;
-  const record = { installedAt, lastSeenAt: now, activated: true };
-  paths.forEach((p) => writeMarker(p, record));
-  return { ok: true };
+  if (!state) init();
+  if (Date.now() < blockedUntil) return { ok: false, reason: "blocked", status: getStatus() };
+  const status = getStatus();
+  if (status.exhausted && status.locked) return { ok: false, reason: "exhausted", status };
+  const expected = CODE_HASHES[state.step];
+  const given = sha(SALT + normalize(code));
+  if (!expected || given !== expected) {
+    failCount += 1;
+    if (failCount >= 5) { blockedUntil = Date.now() + 60 * 1000; failCount = 0; }
+    return { ok: false, reason: "invalid", status: getStatus() };
+  }
+  failCount = 0;
+  const now = effectiveNow();
+  state = seal({ ...state, step: state.step + 1, lastSeen: now, validUntil: now + PERIOD_MS });
+  writeAll(state);
+  return { ok: true, status: getStatus() };
 }
 
-module.exports = { getLicenseState, activate };
+module.exports = { init, getStatus, activate, isLocked };

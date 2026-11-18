@@ -7,6 +7,7 @@ const fs = require("fs");
 const { createUpdater } = require("./updater.cjs");
 const drawer = require("./drawer.cjs");
 const restoreTools = require("./restore.cjs");
+const license = require("./license.cjs");
 
 // Driver-mode printing: older thermal drivers can't take Chromium's XPS print
 // path and print garbage. No effect if the feature doesn't exist.
@@ -344,6 +345,8 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    license.init();
+    setInterval(() => license.getStatus(), 30 * 1000);
     initDatabase();
     dailyBackup();
     buildMenu();
@@ -418,7 +421,11 @@ ipcMain.handle("printers:test-print", async (_evt, partial) => {
   return printSale(testSale, cfg);
 });
 
+ipcMain.handle("license:status", () => license.getStatus());
+ipcMain.handle("license:activate", (_evt, code) => license.activate(code));
+
 ipcMain.handle("data:load", () => {
+  if (license.isLocked()) return null;
   if (!posDb) return readData();
   try {
     pausedForReload = false;
@@ -440,6 +447,7 @@ ipcMain.handle("data:load", () => {
 
 // Full state (first save, restore/import, or when delta saving isn't available)
 ipcMain.handle("data:save", (_evt, data) => {
+  if (license.isLocked()) return false;
   if (writesBlocked || pausedForReload) return false;
   if (!posDb) return writeData(data);
   dailyBackup();
@@ -448,6 +456,7 @@ ipcMain.handle("data:save", (_evt, data) => {
 
 // Only the rows that changed since the last save
 ipcMain.handle("data:save-delta", (_evt, delta) => {
+  if (license.isLocked()) return { ok: false, blocked: true };
   if (!posDb) return { ok: false, fallback: true };
   if (writesBlocked || pausedForReload) return { ok: false, blocked: true };
   try {
@@ -673,9 +682,10 @@ async function openDrawerFromConfig() {
   if (!name) return { ok: false, error: "No receipt printer selected (Printer menu > Select receipt printer…)" };
   return drawer.openDrawer({ printerName: name, pin: cfg.drawerPin === 1 ? 1 : 0, scriptDir: app.getPath("userData") });
 }
-ipcMain.handle("drawer:open", () => openDrawerFromConfig());
+ipcMain.handle("drawer:open", () => (license.isLocked() ? { ok: false, error: "locked" } : openDrawerFromConfig()));
 
 ipcMain.handle("print:receipt", async (_evt, sale) => {
+  if (license.isLocked()) return { ok: false, error: "locked" };
   if (!mainWindow) return { ok: false, error: "No window" };
   const cfg = readConfig();
   const driverMode = process.platform !== "win32" || cfg.printMode === "driver";
