@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { KeyRound } from "lucide-react";
-import ThemeToggle from "./ThemeToggle";
 import { APP_NAME, BRAND_FOOTER } from "../../lib/pos/config";
 
 // Wraps the whole POS. While the licence is expired, only the activation
@@ -36,7 +35,6 @@ function ActivationScreen({ status, onActivated }) {
 
   return (
     <div className="relative flex h-screen w-screen items-center justify-center bg-pos-bg">
-      <ThemeToggle className="absolute right-4 top-4" />
       <div className="w-[400px] rounded-xl border border-pos-border bg-pos-panel p-7 shadow-2xl">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <img src="/logo.png" alt="Jnex" className="h-14 w-14 object-contain" />
