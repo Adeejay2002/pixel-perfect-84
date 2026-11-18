@@ -78,8 +78,16 @@ function ActivationScreen({ status, onActivated }) {
 }
 
 export default function LicenseGate({ children }) {
-  const api = typeof window !== "undefined" ? window.posLicense : null;
+  // Server render and the first client render must be identical (blank), so the
+  // licence check only starts after mount. Otherwise hydration fails.
+  const [mounted, setMounted] = useState(false);
+  const [api, setApi] = useState(null);
   const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    setApi(window.posLicense || null);
+    setMounted(true);
+  }, []);
 
   const refresh = useCallback(() => {
     if (!api) return;
@@ -87,13 +95,16 @@ export default function LicenseGate({ children }) {
   }, [api]);
 
   useEffect(() => {
+    if (!api) return undefined;
     refresh();
     const t = setInterval(refresh, 30000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [api, refresh]);
 
-  if (!api) return children;
-  if (!status) return <div className="h-screen w-screen bg-pos-bg" />;
+  const blank = <div className="h-screen w-screen bg-pos-bg" />;
+  if (!mounted) return blank;
+  if (!api) return children; // browser / dev: no licence bridge
+  if (!status) return blank;
   if (status.locked) return <ActivationScreen status={status} onActivated={setStatus} />;
 
   const daysLeft = Math.ceil(status.remainingMs / 86400000);
