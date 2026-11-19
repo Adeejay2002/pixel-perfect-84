@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { X, Plus, Trash2, AlertTriangle } from "lucide-react";
-import { usePos, money } from "../../lib/pos/store";
+import { X, Plus, Trash2, AlertTriangle, Printer } from "lucide-react";
+import { usePos, money, roundQty, fmtQty } from "../../lib/pos/store";
 import { useDialog } from "./Dialog";
 import { daysUntil, estimateBatchStock } from "../../lib/pos/alerts";
 
@@ -252,7 +252,7 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
   const addProductLine = (p) => {
     setLines((cur0) => {
       const existing = cur0.find((l) => l.productId === p.id);
-      if (existing) return cur0.map((l) => (l === existing ? { ...l, qty: String((Number(l.qty) || 0) + 1) } : l));
+      if (existing) return cur0.map((l) => (l === existing ? { ...l, qty: String(roundQty((Number(l.qty) || 0) + 1)) } : l));
       return [...cur0, { key: ++lineKey, productId: p.id, qty: "1", cost: String((p.cost || 0) / 100), expiry: "" }];
     });
     setSearch("");
@@ -269,11 +269,11 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
 
   const patchLine = (key, patch) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
-  const total = lines.reduce((sum, l) => sum + (Math.floor(Number(l.qty)) || 0) * toCents(l.cost), 0);
+  const total = lines.reduce((sum, l) => sum + Math.round(roundQty(l.qty) * toCents(l.cost)), 0);
 
   const save = () => {
     const items = lines
-      .map((l) => ({ productId: l.productId, qty: Math.floor(Number(l.qty) || 0), cost: toCents(l.cost), expiry: l.expiry || null }))
+      .map((l) => ({ productId: l.productId, qty: roundQty(l.qty), cost: toCents(l.cost), expiry: l.expiry || null }))
       .filter((i) => i.qty > 0);
     if (!items.length) return showToast("Add at least one item with a quantity", "error");
     const past = items.find((i) => i.expiry && daysUntil(i.expiry) < 0);
@@ -333,7 +333,7 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
           <thead className="text-muted-foreground">
             <tr className="border-b border-pos-border">
               <th className="py-2">Product</th>
-              <th>Qty</th>
+              <th>Qty (kg / units)</th>
               <th>Cost each ({cur})</th>
               <th>Expiry (optional)</th>
               <th className="text-right">Line total</th>
@@ -349,10 +349,10 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
                 <tr key={l.key} className="border-b border-pos-border align-top text-foreground">
                   <td className="py-1.5">
                     {p?.name || "(deleted product)"}
-                    <div className="text-[10px] text-muted-foreground">in stock: {p?.stock ?? 0}</div>
+                    <div className="text-[10px] text-muted-foreground">in stock: {fmtQty(p?.stock ?? 0)}</div>
                   </td>
                   <td>
-                    <input type="number" min="1" value={l.qty} onChange={(e) => patchLine(l.key, { qty: e.target.value })} className={`${cell} w-16`} />
+                    <input type="number" min="0" step="0.001" inputMode="decimal" value={l.qty} onChange={(e) => patchLine(l.key, { qty: e.target.value })} className={`${cell} w-24`} />
                   </td>
                   <td>
                     <input type="number" min="0" step="0.01" value={l.cost} onChange={(e) => patchLine(l.key, { cost: e.target.value })} className={`${cell} w-24`} />
@@ -365,7 +365,7 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
                   <td>
                     <input type="date" value={l.expiry} onChange={(e) => patchLine(l.key, { expiry: e.target.value })} className={`${cell} w-36`} />
                   </td>
-                  <td className="text-right">{money((Math.floor(Number(l.qty)) || 0) * newCost, cur)}</td>
+                  <td className="text-right">{money(Math.round(roundQty(l.qty) * newCost), cur)}</td>
                   <td className="text-right">
                     <button type="button" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} className="rounded p-1 text-pos-red hover:bg-pos-hover">
                       <Trash2 size={14} />
@@ -395,35 +395,83 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
 }
 
 function PurchaseHistory({ purchases, productById, supplierById, cur }) {
+  const { settings, setReceipt, showToast } = usePos();
   const [open, setOpen] = useState(null);
   const list = useMemo(() => [...purchases].sort((a, b) => String(b.date).localeCompare(String(a.date))), [purchases]);
+  // running number for purchases saved without a supplier invoice number
+  const voucherNoById = useMemo(() => {
+    const asc = [...purchases].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return new Map(asc.map((pu, i) => [pu.id, `BV-${String(i + 1).padStart(4, "0")}`]));
+  }, [purchases]);
+
+  // Thermal voucher handed to the person selling scrap to the shop.
+  const printVoucher = async (pu) => {
+    const voucher = {
+      kind: "voucher",
+      id: pu.id,
+      saleNo: pu.invoiceNo || voucherNoById.get(pu.id),
+      date: pu.date,
+      supplierName: supplierById.get(pu.supplierId)?.name || "Walk-in seller",
+      cashierName: pu.by || "",
+      method: "Cash",
+      currency: settings.currency,
+      shop: { name: settings.shopName, address: settings.shopAddress, phone: settings.shopPhone, logo: settings.shopLogo || "" },
+      items: pu.items.map((i) => ({
+        name: productById.get(i.productId)?.name || "Item",
+        qty: i.qty,
+        unitPrice: i.cost,
+        lineTotal: Math.round(i.qty * i.cost),
+      })),
+      total: pu.total,
+    };
+    const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
+    if (!desktopPrint) return setReceipt(voucher); // browser: preview with a Print button
+    try {
+      const r = await desktopPrint(voucher);
+      if (r && !r.ok) showToast(`Print failed${r.error ? ` — ${r.error}` : ""}`, "error");
+      else showToast("Buying voucher sent to the printer");
+    } catch (err) {
+      showToast(`Print failed — ${String((err && err.message) || err)}`, "error");
+    }
+    return undefined;
+  };
   if (!list.length) return <p className="p-6 text-center text-xs text-muted-foreground">No purchases recorded yet.</p>;
   return (
     <div className="space-y-2">
       {list.map((pu) => (
         <div key={pu.id} className="rounded-md border border-pos-border bg-pos-tile">
-          <button type="button" onClick={() => setOpen(open === pu.id ? null : pu.id)} className="flex w-full items-center justify-between px-4 py-3 text-left">
-            <div>
-              <p className="text-sm font-semibold text-foreground">
-                {supplierById.get(pu.supplierId)?.name || "No supplier"}
-                {pu.invoiceNo ? ` · #${pu.invoiceNo}` : ""}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                {shortDate(pu.date)} · {pu.items.length} item(s){pu.by ? ` · ${pu.by}` : ""}
-              </p>
-            </div>
-            <span className="text-sm font-bold text-foreground">{money(pu.total, cur)}</span>
-          </button>
+          <div className="flex items-center gap-2 pr-3">
+            <button type="button" onClick={() => setOpen(open === pu.id ? null : pu.id)} className="flex min-w-0 flex-1 items-center justify-between px-4 py-3 text-left">
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  {supplierById.get(pu.supplierId)?.name || "No supplier"}
+                  {pu.invoiceNo ? ` · #${pu.invoiceNo}` : ` · ${voucherNoById.get(pu.id)}`}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {shortDate(pu.date)} · {pu.items.length} item(s){pu.by ? ` · ${pu.by}` : ""}
+                </p>
+              </div>
+              <span className="text-sm font-bold text-foreground">{money(pu.total, cur)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => printVoucher(pu)}
+              title="Print Buying Voucher"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded bg-pos-green px-3 text-[11px] font-semibold text-black hover:brightness-110"
+            >
+              <Printer size={13} /> Print Buying Voucher
+            </button>
+          </div>
           {open === pu.id && (
             <table className="w-full border-t border-pos-border text-left text-xs">
               <tbody>
                 {pu.items.map((i, idx) => (
                   <tr key={idx} className="border-b border-pos-border text-foreground last:border-0">
                     <td className="px-4 py-1.5">{productById.get(i.productId)?.name || "(deleted product)"}</td>
-                    <td>×{i.qty}</td>
+                    <td>×{fmtQty(i.qty)}</td>
                     <td>@ {money(i.cost, cur)}</td>
                     <td className="text-muted-foreground">{i.expiry ? `exp ${i.expiry}` : ""}</td>
-                    <td className="pr-4 text-right">{money(i.qty * i.cost, cur)}</td>
+                    <td className="pr-4 text-right">{money(Math.round(i.qty * i.cost), cur)}</td>
                   </tr>
                 ))}
               </tbody>

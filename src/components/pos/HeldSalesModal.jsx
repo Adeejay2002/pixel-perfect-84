@@ -9,7 +9,7 @@ export default function HeldSalesModal({ open, onClose }) {
   const heldTotal = (h) =>
     (h.lines || [])
       .filter((l) => l.status !== "void")
-      .reduce((sum, l) => sum + (l.unitPrice ?? l.price) * l.qty, 0);
+      .reduce((sum, l) => sum + Math.round((l.unitPrice ?? l.price) * l.qty), 0);
 
   return (
     <div className="pos-no-print fixed inset-0 z-[65] flex items-center justify-center bg-black/70 p-4">

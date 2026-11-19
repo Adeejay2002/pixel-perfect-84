@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Delete } from "lucide-react";
-import { usePos, money } from "../../lib/pos/store";
+import { usePos, money, fmtQty } from "../../lib/pos/store";
 import { useTicketActions } from "./ticketActions";
 
 function Btn({ children, tone = "neutral", onClick, className = "" }) {
@@ -103,14 +103,14 @@ export default function PaymentModal({ open, onClose, initialMethod = "Cash", on
               return (
                 <div key={l.id} className="flex items-center justify-between border-b border-pos-border px-4 py-2 text-xs">
                   <span className="truncate text-foreground">
-                    {l.qty} × {l.name}
+                    {fmtQty(l.qty)} × {l.name}
                     {unit !== l.price && (
                       <span className="ml-1 text-[10px] text-pos-amber">-{l.discountPercent}%</span>
                     )}
                   </span>
                   <span className="ml-2 shrink-0 text-muted-foreground">
-                    {unit !== l.price && <span className="mr-1 line-through">{money(l.price * l.qty, c)}</span>}
-                    {money(unit * l.qty, c)}
+                    {unit !== l.price && <span className="mr-1 line-through">{money(Math.round(l.price * l.qty), c)}</span>}
+                    {money(Math.round(unit * l.qty), c)}
                   </span>
                 </div>
               );

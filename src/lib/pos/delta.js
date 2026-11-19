@@ -6,7 +6,7 @@
 export const COLLECTIONS = [
   "categories", "products", "customers", "sales", "heldSales", "shifts",
   // agent-ready business data
-  "suppliers", "purchases", "batches", "expenses",
+  "suppliers", "purchases", "batches", "expenses", "customerPayments",
 ];
 
 export function computeDelta(prev, next) {

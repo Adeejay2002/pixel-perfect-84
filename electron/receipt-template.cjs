@@ -22,19 +22,26 @@ function money(cents, currency) {
   return `${currency || "Rs"} ${v.toFixed(2)}`;
 }
 
+// quantities may be decimal kg: 3 decimals max, no float noise (0.1+0.2 -> 0.3)
+const fmtQty = (n) => String(Math.round((Number(n) || 0) * 1000) / 1000);
+
 function buildReceiptHtml(sale, paperWidthMM = 80) {
+  const isVoucher = sale.kind === "voucher";
   const c = sale.currency || "Rs";
   const shop = sale.shop || {};
   const items = sale.items || [];
 
+  // Sales receipt: item name, quantity and line total only (no unit price).
+  // Buying voucher: also shows the cost rate paid per kg.
   const itemRows = items
     .map((i) => {
-      const unit = ((i.unitPrice || 0) / 100).toFixed(2);
-      const was = i.unitPrice !== i.price ? ` (was ${((i.price || 0) / 100).toFixed(2)})` : "";
       const lineTotal = ((i.lineTotal || 0) / 100).toFixed(2);
+      const left = isVoucher
+        ? `${fmtQty(i.qty)} kg x ${((i.unitPrice || 0) / 100).toFixed(2)}`
+        : `Qty: ${fmtQty(i.qty)}`;
       return `
         <p class="name">${esc(i.name)}</p>
-        <div class="row"><span>${i.qty} x ${unit}${was}</span><span>${lineTotal}</span></div>`;
+        <div class="row"><span>${left}</span><span>${lineTotal}</span></div>`;
     })
     .join("");
 
@@ -102,23 +109,33 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
     ${shop.address ? `<p>${esc(shop.address)}</p>` : ""}
     ${shop.phone ? `<p>Tel: ${esc(shop.phone)}</p>` : ""}
   </div>
+  ${isVoucher ? `<p class="center" style="font-weight:700;margin-top:2px">BUYING VOUCHER</p>` : ""}
   <div class="hr"></div>
-  <div class="row"><span>Bill #${esc(sale.saleNo)}</span><span>${esc(new Date(sale.date).toLocaleString())}</span></div>
-  <p>Payment: ${esc(sale.method)}</p>
+  <div class="row"><span>${isVoucher ? "Voucher" : "Bill"} #${esc(sale.saleNo)}</span><span>${esc(new Date(sale.date).toLocaleString())}</span></div>
+  ${
+    isVoucher
+      ? `<p>Collector / Supplier: ${esc(sale.supplierName)}</p>${sale.cashierName ? `<p>Received by: ${esc(sale.cashierName)}</p>` : ""}`
+      : `<p>Payment: ${esc(sale.method)}</p>
   ${sale.cashierName ? `<p>Served by: ${esc(sale.cashierName)}</p>` : ""}
   ${sale.comment ? `<p>Note: ${esc(sale.comment)}</p>` : ""}
-  ${sale.refunded ? `<p style="font-weight:700">** REFUNDED **</p>` : ""}
+  ${sale.refunded ? `<p style="font-weight:700">** REFUNDED **</p>` : ""}`
+  }
   <div class="hr"></div>
   ${itemRows}
   <div class="hr"></div>
-  <div class="row"><span>Subtotal</span><span>${money(sale.subtotal, c)}</span></div>
+  ${
+    isVoucher
+      ? `<div class="total-row"><span>TOTAL PAID</span><span>${money(sale.total, c)}</span></div>
+  <div class="row" style="margin-top:14px"><span>Seller sign: ______</span><span>Cashier: ______</span></div>`
+      : `<div class="row"><span>Subtotal</span><span>${money(sale.subtotal, c)}</span></div>
   ${productDiscountBlock}
   ${billDiscountBlock}
   <div class="row"><span>Tax</span><span>${money(sale.tax, c)}</span></div>
   <div class="total-row"><span>TOTAL</span><span>${money(sale.total, c)}</span></div>
-  ${cashBlock}
+  ${cashBlock}`
+  }
   <div class="hr"></div>
-  <p class="center">Thank you for your purchase!</p>
+  <p class="center">${isVoucher ? "Thank you!" : "Thank you for your purchase!"}</p>
   <p class="footer">Powered by Jnex Software Solution</p>
 </body>
 </html>`;

@@ -8,6 +8,11 @@ import { newId } from "./ids";
 import { deriveEvents } from "./ledger";
 import { computeAlerts } from "./alerts";
 
+// Quantities can be decimal (kg): keep them to 3 decimals so sums such as
+// 0.1 + 0.2 never show as 0.30000000000000004.
+export const roundQty = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+export const fmtQty = (n) => String(roundQty(n));
+
 // ---------------------------------------------------------------------------
 // Data access layer. Every read/write to persisted data goes through here so
 // the whole thing can later be swapped for a backend without touching the UI.
@@ -42,6 +47,7 @@ const defaultState = () => ({
   purchases: [],
   batches: [],
   expenses: [],
+  customerPayments: [],
   nextSaleNo: 1042,
   shift: null,
   shifts: [],
@@ -59,6 +65,7 @@ export const blankState = () => ({
   purchases: [],
   batches: [],
   expenses: [],
+  customerPayments: [],
   nextSaleNo: 1001,
   shift: null,
   shifts: [],
@@ -96,7 +103,7 @@ function migrate(parsed) {
   }
   // supplier link + reorder level feed the stock alerts / supplier shopping list
   next.products = (next.products || []).map((p) => ({ discountPercent: 0, supplierId: null, reorderLevel: 0, ...p }));
-  for (const key of ["suppliers", "purchases", "batches", "expenses"]) {
+  for (const key of ["suppliers", "purchases", "batches", "expenses", "customerPayments"]) {
     next[key] = Array.isArray(next[key]) ? next[key] : [];
   }
   // legacy seeded data stored prices in plain rupees while money() expects cents.
@@ -167,6 +174,9 @@ export function PosProvider({ children }) {
   const saveChainRef = useRef(Promise.resolve());
   // who is logged in right now (for the audit log); updated every render
   const actorRef = useRef({ name: null, role: null });
+  // always the latest state, for callbacks that must decide and return a result straight away
+  const dbRef = useRef(db);
+  dbRef.current = db;
 
   // auth
   const [session, setSession] = useState(null); // { role: 'cashier' | 'owner' }
@@ -305,7 +315,7 @@ export function PosProvider({ children }) {
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === product.id && l.status === "new");
       if (existing) {
-        return prev.map((l) => (l.id === existing.id ? { ...l, qty: l.qty + 1 } : l));
+        return prev.map((l) => (l.id === existing.id ? { ...l, qty: roundQty(l.qty + 1) } : l));
       }
       return [
         ...prev,
@@ -346,9 +356,26 @@ export function PosProvider({ children }) {
   }, []);
 
   const setLineQty = useCallback((id, qty) => {
+    const q = roundQty(qty);
     setLines((prev) =>
-      prev.flatMap((l) => (l.id !== id ? [l] : qty <= 0 ? [] : [{ ...l, qty }])),
+      prev.flatMap((l) => (l.id !== id ? [l] : q <= 0 ? [] : [{ ...l, qty: q }])),
     );
+  }, []);
+
+  // Negotiated selling price for ONE line of the current bill (cents). Sets both
+  // price and unitPrice so it is not shown as a discount; the product's own
+  // price is untouched. Totals / tax / profit follow automatically.
+  const updateLinePrice = useCallback((id, newPriceCents) => {
+    const cents = Math.round(Number(newPriceCents));
+    if (!Number.isFinite(cents) || cents <= 0) return false;
+    setLines((prev) =>
+      prev.map((l) =>
+        l.id === id
+          ? { ...l, price: cents, unitPrice: cents, discountPercent: 0, priceOverridden: true }
+          : l,
+      ),
+    );
+    return true;
   }, []);
 
   const clearCart = useCallback(() => {
@@ -369,8 +396,12 @@ export function PosProvider({ children }) {
 
   const totals = useMemo(() => {
     const active = lines.filter((l) => l.status !== "void");
-    const gross = active.reduce((s, l) => s + l.price * l.qty, 0);
-    const productDiscount = active.reduce((s, l) => s + (l.price - (l.unitPrice ?? l.price)) * l.qty, 0);
+    // every line is rounded to whole cents on its own, so decimal kg never leaves fractions
+    const gross = active.reduce((s, l) => s + Math.round(l.price * l.qty), 0);
+    const productDiscount = active.reduce(
+      (s, l) => s + (Math.round(l.price * l.qty) - Math.round((l.unitPrice ?? l.price) * l.qty)),
+      0,
+    );
     const afterProduct = gross - productDiscount;
     const pct = Number(db.settings.billDiscountPercent || 0);
     const billApplied = billDiscountOn && db.settings.billDiscountEnabled;
@@ -495,10 +526,10 @@ export function PosProvider({ children }) {
         price: l.price,
         unitPrice: l.unitPrice ?? l.price,
         cost: l.cost || 0,
-        lineTotal: (l.unitPrice ?? l.price) * l.qty,
+        lineTotal: Math.round((l.unitPrice ?? l.price) * l.qty),
         refundedQty: 0,
       }));
-      const cost = items.reduce((s, i) => s + i.cost * i.qty, 0);
+      const cost = items.reduce((s, i) => s + Math.round(i.cost * i.qty), 0);
       // bill discount is spread over the whole ticket; revenue = net of discounts
       const revenue = totals.net;
       const payload = {
@@ -539,7 +570,7 @@ export function PosProvider({ children }) {
       };
       // aggregate quantity per product across EVERY active line before deducting
       const qtyByProduct = new Map();
-      active.forEach((l) => qtyByProduct.set(l.productId, (qtyByProduct.get(l.productId) || 0) + l.qty));
+      active.forEach((l) => qtyByProduct.set(l.productId, roundQty((qtyByProduct.get(l.productId) || 0) + l.qty)));
       setDb((d) => ({
         ...d,
         sales: [...d.sales, payload],
@@ -552,7 +583,7 @@ export function PosProvider({ children }) {
             : d.customers,
         products: d.products.map((p) => {
           const q = qtyByProduct.get(p.id);
-          return q ? { ...p, stock: Math.max(0, p.stock - q) } : p;
+          return q ? { ...p, stock: Math.max(0, roundQty(p.stock - q)) } : p;
         }),
       }));
       const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
@@ -589,8 +620,8 @@ export function PosProvider({ children }) {
       if (!sale || sale.refunded) return d;
       const restore = new Map();
       (sale.items || []).forEach((i) => {
-        const left = i.qty - (i.refundedQty || 0);
-        if (left > 0) restore.set(i.productId, (restore.get(i.productId) || 0) + left);
+        const left = roundQty(i.qty - (i.refundedQty || 0));
+        if (left > 0) restore.set(i.productId, roundQty((restore.get(i.productId) || 0) + left));
       });
       return {
         ...d,
@@ -608,7 +639,7 @@ export function PosProvider({ children }) {
         ),
         products: d.products.map((p) => {
           const q = restore.get(p.id);
-          return q ? { ...p, stock: p.stock + q } : p;
+          return q ? { ...p, stock: roundQty(p.stock + q) } : p;
         }),
         customers:
           sale.method === "Account"
@@ -629,14 +660,15 @@ export function PosProvider({ children }) {
       if (!sale || sale.refunded) return d;
       const item = (sale.items || []).find((i) => i.productId === productId);
       if (!item) return d;
-      const remaining = item.qty - (item.refundedQty || 0);
-      const n = Math.min(Math.max(1, Number(qty) || 1), remaining);
+      const remaining = roundQty(item.qty - (item.refundedQty || 0));
+      const want = roundQty(qty) || Math.min(1, remaining);
+      const n = Math.min(Math.max(0.001, want), remaining);
       if (n <= 0) return d;
       ok = true;
       const lineRevenue = item.lineTotal / item.qty * n;
-      const lineCost = (item.cost || 0) * n;
+      const lineCost = Math.round((item.cost || 0) * n);
       const nextItems = sale.items.map((i) =>
-        i.productId === productId ? { ...i, refundedQty: (i.refundedQty || 0) + n } : i,
+        i.productId === productId ? { ...i, refundedQty: roundQty((i.refundedQty || 0) + n) } : i,
       );
       const fullyRefunded = nextItems.every((i) => (i.refundedQty || 0) >= i.qty);
       const nextSale = {
@@ -652,7 +684,7 @@ export function PosProvider({ children }) {
       return {
         ...d,
         sales: d.sales.map((s) => (s.id === saleId ? nextSale : s)),
-        products: d.products.map((p) => (p.id === productId ? { ...p, stock: p.stock + n } : p)),
+        products: d.products.map((p) => (p.id === productId ? { ...p, stock: roundQty(p.stock + n) } : p)),
         customers:
           sale.method === "Account"
             ? d.customers.map((cu) =>
@@ -691,8 +723,13 @@ export function PosProvider({ children }) {
     const account = inShift.filter((s) => s.method === "Account").reduce((a, s) => a + (s.total || 0), 0);
     const other = inShift.filter((s) => s.method === "Check" || s.method === "Bank Transfer").reduce((a, s) => a + (s.total || 0), 0);
     const refunds = inShift.reduce((a, s) => a + (s.refundedAmount || 0), 0);
+    // credit payments taken in cash during this shift also go into the drawer
+    const debtCash = (db.customerPayments || [])
+      .filter((p) => p.shiftId === shift.id && p.method === "Cash")
+      .reduce((a, p) => a + (p.amount || 0), 0);
     return {
       ...shift,
+      debtCash,
       bills: inShift.length,
       sales: inShift.reduce((a, s) => a + (s.total || 0), 0),
       cash,
@@ -700,9 +737,9 @@ export function PosProvider({ children }) {
       account,
       other,
       refunds,
-      expectedCash: shift.openingFloat + cash - refunds,
+      expectedCash: shift.openingFloat + cash + debtCash - refunds,
     };
-  }, [db.shift, db.sales]);
+  }, [db.shift, db.sales, db.customerPayments]);
 
   const closeShift = useCallback((actualCash) => {
     const actual = Math.round(Number(actualCash) || 0);
@@ -711,7 +748,10 @@ export function PosProvider({ children }) {
       const inShift = (d.sales || []).filter((s) => s.shiftId === d.shift.id);
       const cash = inShift.filter((s) => s.method === "Cash").reduce((a, s) => a + (s.total || 0), 0);
       const refunds = inShift.reduce((a, s) => a + (s.refundedAmount || 0), 0);
-      const expected = d.shift.openingFloat + cash - refunds;
+      const debtCash = (d.customerPayments || [])
+        .filter((p) => p.shiftId === d.shift.id && p.method === "Cash")
+        .reduce((a, p) => a + (p.amount || 0), 0);
+      const expected = d.shift.openingFloat + cash + debtCash - refunds;
       return {
         ...d,
         shift: null,
@@ -748,12 +788,43 @@ export function PosProvider({ children }) {
   const removeProduct = useCallback((id) => {
     setDb((d) => ({ ...d, products: d.products.filter((p) => p.id !== id) }));
   }, []);
-  const settleDebt = useCallback((id, amount) => {
-    setDb((d) => ({
-      ...d,
-      customers: d.customers.map((c) => (c.id === id ? { ...c, debt: Math.max(0, c.debt - amount) } : c)),
-    }));
-  }, []);
+  // Part or full payment of a customer's credit balance. amount in cents.
+  // Returns the saved payment row, or null (bad amount / more than owed).
+  const recordCustomerPayment = useCallback(
+    (id, amount, note = "", method = "Cash") => {
+      const cents = Math.round(Number(amount));
+      if (!Number.isFinite(cents) || cents <= 0) return null;
+      const cur = dbRef.current;
+      const cu = cur.customers.find((c) => c.id === id);
+      if (!cu) return null;
+      const owed = cu.debt || 0;
+      if (cents > owed) return null;
+      const saved = {
+        id: newId("cp"),
+        customerId: id,
+        customerName: cu.name,
+        amount: cents,
+        balanceBefore: owed,
+        balanceAfter: owed - cents,
+        note: String(note || "").trim(),
+        method,
+        shiftId: cur.shift?.id || null,
+        by: operatorName,
+        date: new Date().toISOString(),
+      };
+      setDb((d) => ({
+        ...d,
+        customers: d.customers.map((c) => (c.id === id ? { ...c, debt: Math.max(0, (c.debt || 0) - cents) } : c)),
+        customerPayments: [...(d.customerPayments || []), saved],
+      }));
+      return saved;
+    },
+    [operatorName],
+  );
+  const settleDebt = useCallback(
+    (id, amount) => recordCustomerPayment(id, amount, "Settled in full"),
+    [recordCustomerPayment],
+  );
   const addCustomer = useCallback((name, phone) => {
     const trimmedName = String(name || "").trim();
     if (!trimmedName) return null;
@@ -977,7 +1048,7 @@ export function PosProvider({ children }) {
   // and creates a batch row for items with an expiry date.
   const receivePurchase = useCallback((purchase) => {
     const items = (purchase?.items || [])
-      .map((i) => ({ productId: i.productId, qty: Math.floor(Number(i.qty) || 0), cost: Math.round(Number(i.cost) || 0), expiry: i.expiry || null }))
+      .map((i) => ({ productId: i.productId, qty: roundQty(i.qty), cost: Math.round(Number(i.cost) || 0), expiry: i.expiry || null }))
       .filter((i) => i.productId && i.qty > 0);
     if (!items.length) return null;
     const row = {
@@ -986,14 +1057,14 @@ export function PosProvider({ children }) {
       supplierId: purchase.supplierId || null,
       invoiceNo: String(purchase.invoiceNo || "").trim(),
       items,
-      total: items.reduce((sum, i) => sum + i.qty * i.cost, 0),
+      total: items.reduce((sum, i) => sum + Math.round(i.qty * i.cost), 0),
       by: operatorName,
     };
     setDb((d) => {
       const qtyBy = new Map();
       const costBy = new Map();
       items.forEach((i) => {
-        qtyBy.set(i.productId, (qtyBy.get(i.productId) || 0) + i.qty);
+        qtyBy.set(i.productId, roundQty((qtyBy.get(i.productId) || 0) + i.qty));
         if (i.cost > 0) costBy.set(i.productId, i.cost);
       });
       return {
@@ -1008,7 +1079,7 @@ export function PosProvider({ children }) {
         products: d.products.map((p) => {
           const q = qtyBy.get(p.id);
           if (!q) return p;
-          return { ...p, stock: (p.stock || 0) + q, ...(costBy.has(p.id) ? { cost: costBy.get(p.id) } : {}) };
+          return { ...p, stock: roundQty((p.stock || 0) + q), ...(costBy.has(p.id) ? { cost: costBy.get(p.id) } : {}) };
         }),
       };
     });
@@ -1070,6 +1141,7 @@ export function PosProvider({ children }) {
     addLineByCode,
     setLineStatus,
     setLineQty,
+    updateLinePrice,
     clearCart,
     totals,
     billDiscountOn,
@@ -1093,6 +1165,8 @@ export function PosProvider({ children }) {
     addProduct,
     removeProduct,
     settleDebt,
+    recordCustomerPayment,
+    customerPayments: db.customerPayments || [],
     addCustomer,
     bulkAddProducts,
     bulkAddCustomers,

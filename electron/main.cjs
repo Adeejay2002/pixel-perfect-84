@@ -345,7 +345,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    license.init();
+    try { license.init(); } catch (e) { console.error("licence init failed", e); }
     setInterval(() => license.getStatus(), 30 * 1000);
     initDatabase();
     dailyBackup();
@@ -421,7 +421,9 @@ ipcMain.handle("printers:test-print", async (_evt, partial) => {
   return printSale(testSale, cfg);
 });
 
-ipcMain.handle("license:status", () => license.getStatus());
+ipcMain.handle("license:status", () => {
+  try { return license.getStatus(); } catch (e) { console.error(e); return { locked: true, remainingMs: 0, trial: false, exhausted: false, blockedSeconds: 0 }; }
+});
 ipcMain.handle("license:activate", (_evt, code) => license.activate(code));
 
 ipcMain.handle("data:load", () => {

@@ -49,6 +49,7 @@ const sign = (o) =>
 
 let state = null;
 let lastSaved = 0;
+let lastVerified = 0;
 let failCount = 0;
 let blockedUntil = 0;
 
@@ -148,7 +149,11 @@ function tick(force) {
   const now = effectiveNow();
   const moved = now > state.lastSeen;
   if (moved) state = seal({ ...state, lastSeen: now });
-  const missing = readAll().length < 2;
+  let missing = false;
+  if (force || Date.now() - lastVerified > SAVE_EVERY_MS) {
+    lastVerified = Date.now();
+    missing = readAll().length < 3 - (process.platform === "win32" ? 0 : 1);
+  }
   if (force || missing || (moved && Date.now() - lastSaved > SAVE_EVERY_MS)) writeAll(state);
 }
 

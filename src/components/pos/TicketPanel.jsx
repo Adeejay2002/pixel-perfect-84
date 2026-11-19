@@ -1,15 +1,40 @@
-import { Lock, Minus, Plus, Trash2, Percent, User } from "lucide-react";
-import { usePos, money } from "../../lib/pos/store";
+import { useState } from "react";
+import { Lock, Minus, Plus, Trash2, Percent, User, Pencil } from "lucide-react";
+import { usePos, money, fmtQty } from "../../lib/pos/store";
 import { useTicketActions } from "./ticketActions";
+import { useDialog } from "./Dialog";
+import QuantityModal from "./QuantityModal";
 
 export default function TicketPanel() {
   const {
     saleNo, lines, totals, settings, customers, customerId, setCustomerId,
-    setLineStatus, setLineQty, lockScreen, comment,
+    setLineStatus, setLineQty, updateLinePrice, showToast, lockScreen, comment,
     billDiscountAvailable, billDiscountOn, toggleBillDiscount,
   } = usePos();
   const c = settings.currency;
   const { editComment, voidWithReason } = useTicketActions();
+  const dialog = useDialog();
+  const [qtyLineId, setQtyLineId] = useState(null);
+
+  // negotiated price for this bill only (the product's own price is not changed)
+  const editPrice = async (l) => {
+    const unitNow = l.unitPrice ?? l.price;
+    const raw = await dialog.prompt({
+      title: `Selling price · ${l.name}`,
+      message: `Price per unit for this bill only (${c}).`,
+      defaultValue: (unitNow / 100).toFixed(2),
+      inputType: "number",
+      inputMode: "decimal",
+      confirmLabel: "Set price",
+    });
+    if (raw === null) return;
+    const rupees = Number(raw);
+    if (!Number.isFinite(rupees) || rupees <= 0) {
+      showToast("Enter a price greater than 0", "error");
+      return;
+    }
+    updateLinePrice(l.id, Math.round(rupees * 100));
+  };
 
   return (
     <aside className="flex w-[35%] min-w-[340px] flex-col border-l border-pos-border bg-pos-panel">
@@ -82,9 +107,20 @@ export default function TicketPanel() {
                 <p className="truncate text-[10px] text-muted-foreground">
                   #{saleNo} · {new Date(l.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ·{" "}
                   {discounted && <span className="mr-1 line-through">{money(l.price, c)}</span>}
-                  <span className={discounted ? "text-pos-green" : ""}>{money(unit, c)}</span>
+                  <button
+                    type="button"
+                    disabled={l.status === "void"}
+                    onClick={() => editPrice(l)}
+                    title="Change selling price for this bill"
+                    className={`inline-flex items-center gap-0.5 rounded px-0.5 underline decoration-dotted hover:bg-pos-hover ${
+                      discounted || l.priceOverridden ? "text-pos-green" : ""
+                    }`}
+                  >
+                    {money(unit, c)}
+                    <Pencil size={9} />
+                  </button>
                   {discounted && <span className="ml-1 text-pos-amber">-{l.discountPercent}%</span>} ·{" "}
-                  {money(unit * l.qty, c)}
+                  {money(Math.round(unit * l.qty), c)}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -95,7 +131,15 @@ export default function TicketPanel() {
                 >
                   <Minus size={12} />
                 </button>
-                <span className="w-6 text-center text-sm font-bold text-foreground">{l.qty}</span>
+                <button
+                  type="button"
+                  disabled={l.status === "void"}
+                  onClick={() => setQtyLineId(l.id)}
+                  title="Type quantity (kg / decimals)"
+                  className="min-w-[2.25rem] rounded px-1 text-center text-sm font-bold text-foreground underline decoration-dotted hover:bg-pos-hover"
+                >
+                  {fmtQty(l.qty)}
+                </button>
                 <button
                   type="button"
                   onClick={() => setLineQty(l.id, l.qty + 1)}
@@ -169,6 +213,7 @@ export default function TicketPanel() {
           <Lock size={13} /> Lock
         </button>
       </div>
+      <QuantityModal open={!!qtyLineId} lineId={qtyLineId} onClose={() => setQtyLineId(null)} />
     </aside>
   );
 }

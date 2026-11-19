@@ -1,9 +1,53 @@
 import { useEffect } from "react";
 import { X, Printer } from "lucide-react";
-import { usePos, money } from "../../lib/pos/store";
+import { usePos, money, fmtQty } from "../../lib/pos/store";
 import { RECEIPT_FOOTER } from "../../lib/pos/config";
 
+// Buying voucher: what the shop pays a person who sells scrap / goods to it.
+function VoucherBody({ voucher }) {
+  const c = voucher.currency || "Rs";
+  const shop = voucher.shop || {};
+  return (
+    <div id="pos-receipt" className="mx-auto w-[300px] bg-white p-4 font-mono text-[11px] leading-tight text-black">
+      <div className="text-center">
+        {shop.logo && <img src={shop.logo} alt="" className="mx-auto mb-1 max-h-12 max-w-[140px] object-contain" />}
+        <p className="text-sm font-bold uppercase">{shop.name || "Shop"}</p>
+        {shop.address && <p>{shop.address}</p>}
+        {shop.phone && <p>Tel: {shop.phone}</p>}
+        <p className="mt-1 text-xs font-bold">BUYING VOUCHER</p>
+      </div>
+      <div className="my-2 border-t border-dashed border-black" />
+      <div className="flex justify-between">
+        <span>Voucher #{voucher.saleNo}</span>
+        <span>{new Date(voucher.date).toLocaleString()}</span>
+      </div>
+      <p>Collector / Supplier: {voucher.supplierName}</p>
+      {voucher.cashierName && <p>Received by: {voucher.cashierName}</p>}
+      <div className="my-2 border-t border-dashed border-black" />
+      {(voucher.items || []).map((i, idx) => (
+        <div key={idx} className="mb-1">
+          <p>{i.name}</p>
+          <div className="flex justify-between">
+            <span>{fmtQty(i.qty)} kg x {(i.unitPrice / 100).toFixed(2)}</span>
+            <span>{(i.lineTotal / 100).toFixed(2)}</span>
+          </div>
+        </div>
+      ))}
+      <div className="my-2 border-t border-dashed border-black" />
+      <div className="mt-1 flex justify-between border-t border-black pt-1 text-sm font-bold">
+        <span>TOTAL PAID</span><span>{money(voucher.total, c)}</span>
+      </div>
+      <div className="mt-6 flex justify-between text-[10px]">
+        <span>Seller sign: ________</span><span>Cashier: ________</span>
+      </div>
+      <p className="mt-2 text-center">Thank you!</p>
+      <p className="mt-1 text-center text-[8px] font-normal text-gray-500">{RECEIPT_FOOTER}</p>
+    </div>
+  );
+}
+
 export function ReceiptBody({ sale }) {
+  if (sale.kind === "voucher") return <VoucherBody voucher={sale} />;
   const c = sale.currency || "Rs";
   const shop = sale.shop || {};
   return (
@@ -31,10 +75,7 @@ export function ReceiptBody({ sale }) {
         <div key={idx} className="mb-1">
           <p>{i.name}</p>
           <div className="flex justify-between">
-            <span>
-              {i.qty} x {(i.unitPrice / 100).toFixed(2)}
-              {i.unitPrice !== i.price ? ` (was ${(i.price / 100).toFixed(2)})` : ""}
-            </span>
+            <span>Qty: {fmtQty(i.qty)}</span>
             <span>{(i.lineTotal / 100).toFixed(2)}</span>
           </div>
         </div>
@@ -105,14 +146,14 @@ export default function ReceiptModal({ sale, onClose }) {
     <div className="pos-no-print fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
       <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-lg border border-pos-border bg-pos-panel">
         <div className="flex items-center justify-between border-b border-pos-border px-4 py-3">
-          <span className="text-sm font-semibold text-foreground">Receipt · Bill #{sale.saleNo}</span>
+          <span className="text-sm font-semibold text-foreground">{sale.kind === "voucher" ? "Buying voucher" : "Receipt · Bill"} #{sale.saleNo}</span>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X size={18} />
           </button>
         </div>
         <div className="flex-1 overflow-auto bg-pos-bg p-4">
           <ReceiptBody sale={sale} />
-          {canSeeCost && (
+          {canSeeCost && sale.kind !== "voucher" && (
             <p className="mt-3 text-center text-[11px] text-muted-foreground">
               Cost {money(sale.cost || 0, sale.currency)} · Profit {money(sale.profit || 0, sale.currency)}
             </p>
@@ -131,7 +172,7 @@ export default function ReceiptModal({ sale, onClose }) {
             onClick={printNow}
             className="flex h-10 items-center justify-center gap-2 rounded-md bg-pos-green text-xs font-semibold text-black"
           >
-            <Printer size={14} /> Print receipt
+            <Printer size={14} /> {sale.kind === "voucher" ? "Print voucher" : "Print receipt"}
           </button>
         </div>
       </div>

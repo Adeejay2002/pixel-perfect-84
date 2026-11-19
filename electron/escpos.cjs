@@ -93,7 +93,10 @@ function lr(left, right, width) {
   return (left + " ".repeat(gap) + right).slice(0, Math.max(width, left.length + 1 + right.length));
 }
 
+const fmtQty = (n) => String(Math.round((Number(n) || 0) * 1000) / 1000);
+
 function buildTextJob(sale, paperWidthMm, { feedLines = 4, cut = true } = {}) {
+  const isVoucher = sale.kind === "voucher";
   const cols = paperWidthMm === 58 ? 32 : 48;
   const money = (c) => ((Number(c) || 0) / 100).toFixed(2);
   const cur = ascii(sale.currency || "Rs");
@@ -113,20 +116,47 @@ function buildTextJob(sale, paperWidthMm, { feedLines = 4, cut = true } = {}) {
   bold(false);
   if (shop.address) for (const l of wrap(shop.address, cols)) text(l);
   if (shop.phone) text("Tel: " + ascii(shop.phone));
+  if (isVoucher) {
+    bold(true);
+    text("BUYING VOUCHER");
+    bold(false);
+  }
   align(0);
   sep();
-  text(lr("Bill #" + ascii(sale.saleNo), new Date(sale.date).toLocaleString("en-GB"), cols));
-  text("Payment: " + ascii(sale.method));
-  if (sale.cashierName) text("Served by: " + ascii(sale.cashierName));
-  if (sale.comment) for (const l of wrap("Note: " + sale.comment, cols)) text(l);
-  if (sale.refunded) text("** REFUNDED **");
-  sep();
-  for (const i of sale.items || []) {
-    for (const l of wrap(i.name, cols)) text(l);
-    const was = i.unitPrice !== i.price ? ` (was ${money(i.price)})` : "";
-    text(lr(`${i.qty} x ${money(i.unitPrice)}${was}`, money(i.lineTotal), cols));
+  text(lr((isVoucher ? "Voucher #" : "Bill #") + ascii(sale.saleNo), new Date(sale.date).toLocaleString("en-GB"), cols));
+  if (isVoucher) {
+    for (const l of wrap("Collector / Supplier: " + sale.supplierName, cols)) text(l);
+    if (sale.cashierName) text("Received by: " + ascii(sale.cashierName));
+  } else {
+    text("Payment: " + ascii(sale.method));
+    if (sale.cashierName) text("Served by: " + ascii(sale.cashierName));
+    if (sale.comment) for (const l of wrap("Note: " + sale.comment, cols)) text(l);
+    if (sale.refunded) text("** REFUNDED **");
   }
   sep();
+  // Sales receipt: name, quantity and line total only (no unit price).
+  // Buying voucher: also the cost rate paid per kg.
+  for (const i of sale.items || []) {
+    for (const l of wrap(i.name, cols)) text(l);
+    const left = isVoucher ? `${fmtQty(i.qty)} kg x ${money(i.unitPrice)}` : `Qty: ${fmtQty(i.qty)}`;
+    text(lr(left, money(i.lineTotal), cols));
+  }
+  sep();
+  if (isVoucher) {
+    bold(true);
+    text(lr("TOTAL PAID", `${cur} ${money(sale.total)}`, cols));
+    bold(false);
+    text("");
+    text(lr("Seller sign: ______", "Cashier: ______", cols));
+    sep();
+    align(1);
+    text("Thank you!");
+    text("Powered by Jnex Software Solution");
+    align(0);
+    raw(0x1b, 0x64, feedLines);
+    if (cut) raw(0x1d, 0x56, 0x01);
+    return Buffer.concat(out);
+  }
   text(lr("Subtotal", `${cur} ${money(sale.subtotal)}`, cols));
   if (sale.productDiscount > 0) text(lr("Product discounts", `-${cur} ${money(sale.productDiscount)}`, cols));
   if (sale.billDiscount > 0) text(lr(`Bill discount (${sale.billDiscountPercent}%)`, `-${cur} ${money(sale.billDiscount)}`, cols));

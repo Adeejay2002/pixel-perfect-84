@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useRef } from "react";
 import { X, AlertTriangle, Download, Upload, Trash2, Undo2, UserPlus, Plus, ImagePlus } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { usePos, money } from "../../lib/pos/store";
+import { usePos, money, roundQty, fmtQty } from "../../lib/pos/store";
 import { hashCode } from "../../lib/pos/config";
 import { Suppliers, Purchases, Expenses } from "./StockModules";
 import { useDialog } from "./Dialog";
@@ -230,9 +230,10 @@ function Inventory({ onClose }) {
               <td>
                 <input
                   type="number"
+                  step="0.001"
                   value={p.stock}
-                  onChange={(e) => updateProduct(p.id, { stock: Number(e.target.value) })}
-                  className={`w-16 rounded px-2 py-1 outline-none ${p.stock < 5 ? "bg-pos-red/20 text-pos-red" : "bg-pos-tile"}`}
+                  onChange={(e) => updateProduct(p.id, { stock: roundQty(e.target.value) })}
+                  className={`w-20 rounded px-2 py-1 outline-none ${p.stock < 5 ? "bg-pos-red/20 text-pos-red" : "bg-pos-tile"}`}
                 />
               </td>
               <td>
@@ -255,8 +256,161 @@ function Inventory({ onClose }) {
   );
 }
 
-function Debt({ onClose }) {
+// Full picture of one customer: balance owed, part-payment entry, every bill and every payment.
+function CustomerLedger({ customerId, onClose, onOpenReceipt }) {
+  const { customers, sales, customerPayments, recordCustomerPayment, settings, showToast } = usePos();
+  const cur = settings.currency;
+  const cu = customers.find((x) => x.id === customerId);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [method, setMethod] = useState("Cash");
+  const bills = useMemo(() => sales.filter((s) => s.customerId === customerId).slice().reverse(), [sales, customerId]);
+  const pays = useMemo(() => customerPayments.filter((p) => p.customerId === customerId).slice().reverse(), [customerPayments, customerId]);
+  if (!cu) return null;
+  const owed = cu.debt || 0;
+  const totalPaid = pays.reduce((a, p) => a + (p.amount || 0), 0);
+  const field = "h-9 rounded border border-pos-border bg-pos-panel px-3 text-sm text-foreground outline-none";
+
+  const submit = () => {
+    const rupees = Number(amount);
+    if (!Number.isFinite(rupees) || rupees <= 0) return showToast("Enter the payment amount", "error");
+    const cents = Math.round(rupees * 100);
+    if (cents > owed) return showToast(`That is more than the balance (${money(owed, cur)})`, "error");
+    const row = recordCustomerPayment(cu.id, cents, note, method);
+    if (!row) return showToast("Could not record the payment", "error");
+    showToast(`${money(cents, cur)} received · balance now ${money(row.balanceAfter, cur)}`);
+    setAmount("");
+    setNote("");
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="flex h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-pos-border bg-pos-panel">
+        <div className="flex items-center justify-between border-b border-pos-border px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Customer ledger · {cu.name}</h2>
+            <p className="text-[11px] text-muted-foreground">{cu.phone || "No phone"}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 space-y-4 overflow-auto p-4">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-3 rounded-md border border-pos-border bg-pos-tile px-4 py-3 sm:col-span-1">
+              <p className="text-[11px] uppercase text-muted-foreground">Credit balance (owed)</p>
+              <p className={`text-2xl font-bold ${owed > 0 ? "text-pos-red" : "text-pos-green"}`}>{money(owed, cur)}</p>
+            </div>
+            <div className="rounded-md border border-pos-border bg-pos-tile px-4 py-3">
+              <p className="text-[11px] uppercase text-muted-foreground">Bills</p>
+              <p className="text-lg font-bold text-foreground">{bills.length}</p>
+            </div>
+            <div className="rounded-md border border-pos-border bg-pos-tile px-4 py-3">
+              <p className="text-[11px] uppercase text-muted-foreground">Total paid back</p>
+              <p className="text-lg font-bold text-foreground">{money(totalPaid, cur)}</p>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-pos-border bg-pos-tile p-3">
+            <p className="mb-2 text-xs font-semibold text-foreground">Record a payment</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div>
+                <label className="mb-1 block text-[11px] text-muted-foreground">Amount ({cur})</label>
+                <input
+                  type="number" min="0" step="0.01" inputMode="decimal" value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submit()}
+                  placeholder="e.g. 15000" className={`${field} w-36`}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] text-muted-foreground">Paid by</label>
+                <select value={method} onChange={(e) => setMethod(e.target.value)} className={`${field} w-32`}>
+                  <option>Cash</option><option>Bank Transfer</option><option>Card</option><option>Check</option>
+                </select>
+              </div>
+              <div className="min-w-[160px] flex-1">
+                <label className="mb-1 block text-[11px] text-muted-foreground">Note (optional)</label>
+                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" className={`${field} w-full`} />
+              </div>
+              <button type="button" onClick={() => setAmount(String(owed / 100))} disabled={owed <= 0}
+                className="h-9 rounded bg-pos-panel px-3 text-xs font-semibold text-foreground hover:bg-pos-hover disabled:opacity-40">
+                Full balance
+              </button>
+              <button type="button" onClick={submit} disabled={owed <= 0}
+                className="h-9 rounded bg-pos-green px-4 text-xs font-semibold text-black disabled:opacity-40">
+                Record Payment
+              </button>
+            </div>
+            {amount !== "" && Number(amount) > 0 && Math.round(Number(amount) * 100) <= owed && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Balance after this payment: <span className="font-semibold text-foreground">{money(owed - Math.round(Number(amount) * 100), cur)}</span>
+              </p>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-foreground">Bill history</p>
+            <table className="w-full text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-pos-border"><th className="py-2">Bill</th><th>Date</th><th>Paid by</th><th>Items</th><th className="text-right">Total</th><th /></tr>
+              </thead>
+              <tbody>
+                {bills.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">No bills for this customer yet</td></tr>}
+                {bills.map((s) => (
+                  <tr key={s.id} className="border-b border-pos-border align-top text-foreground">
+                    <td className="py-2">#{s.saleNo ?? "—"}</td>
+                    <td className="whitespace-nowrap text-muted-foreground">{new Date(s.date).toLocaleString()}</td>
+                    <td>
+                      <span className={s.method === "Account" ? "font-semibold text-pos-red" : "text-muted-foreground"}>
+                        {s.method === "Account" ? "Account (credit)" : s.method}
+                      </span>
+                      {s.refunded && <span className="ml-1 text-pos-red">· refunded</span>}
+                    </td>
+                    <td className="max-w-[260px] text-muted-foreground">
+                      {(s.items || []).map((i) => `${i.name} ×${fmtQty(i.qty)}`).join(", ") || "—"}
+                    </td>
+                    <td className="text-right font-semibold">{money(s.total || 0, cur)}</td>
+                    <td className="pl-2 text-right">
+                      <button type="button" onClick={() => onOpenReceipt?.(s)} className="whitespace-nowrap rounded bg-pos-panel px-2 py-1 text-[11px] text-foreground hover:bg-pos-hover">
+                        View / Reprint
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-foreground">Payment history</p>
+            <table className="w-full text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-pos-border"><th className="py-2">Date</th><th>Paid by</th><th>Note</th><th className="text-right">Paid</th><th className="text-right">Balance after</th></tr>
+              </thead>
+              <tbody>
+                {pays.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">No payments recorded yet</td></tr>}
+                {pays.map((p) => (
+                  <tr key={p.id} className="border-b border-pos-border text-foreground">
+                    <td className="py-2 text-muted-foreground">{new Date(p.date).toLocaleString()}</td>
+                    <td>{p.method || "Cash"}</td>
+                    <td className="text-muted-foreground">{p.note || "—"}</td>
+                    <td className="text-right font-semibold text-pos-green">{money(p.amount, cur)}</td>
+                    <td className="text-right">{money(p.balanceAfter ?? 0, cur)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Debt({ onClose, onOpenReceipt }) {
   const { customers, settleDebt, addCustomer, settings, showToast, bulkAddCustomers } = usePos();
+  const [ledgerId, setLedgerId] = useState(null);
   const list = Array.isArray(customers) ? customers.filter((c) => c.name !== "Walk-in") : [];
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -344,7 +498,12 @@ function Debt({ onClose }) {
       ) : (
         <div className="space-y-2">
           {list.map((c) => (
-            <div key={c.id} className="flex items-center justify-between rounded-md border border-pos-border bg-pos-tile px-4 py-3">
+            <div
+              key={c.id}
+              onClick={() => setLedgerId(c.id)}
+              title="Open customer ledger"
+              className="flex cursor-pointer items-center justify-between rounded-md border border-pos-border bg-pos-tile px-4 py-3 hover:bg-pos-hover"
+            >
               <div>
                 <p className="text-sm font-semibold text-foreground">{c.name}</p>
                 <p className="text-[11px] text-muted-foreground">{c.phone || "No phone"}</p>
@@ -356,19 +515,24 @@ function Debt({ onClose }) {
                 <button
                   type="button"
                   disabled={c.debt === 0}
-                  onClick={() => { settleDebt(c.id, c.debt); showToast(`${c.name} debt settled`); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (settleDebt(c.id, c.debt)) showToast(`${c.name} debt settled`);
+                  }}
                   className="h-8 rounded bg-pos-green px-3 text-xs font-semibold text-black disabled:opacity-40"
                 >
-                  Settle Debt
+                  Settle Full
                 </button>
+                <span className="text-[11px] text-pos-blue">Ledger ›</span>
               </div>
             </div>
           ))}
         </div>
       )}
       <p className="mt-3 text-[11px] text-muted-foreground">
-        A customer's debt increases automatically when a sale is completed using the "Account" payment method at checkout.
+        A customer's debt increases automatically when a sale is completed using the "Account" payment method at checkout. Tap a customer to see their full ledger and record part payments.
       </p>
+      {ledgerId && <CustomerLedger customerId={ledgerId} onClose={() => setLedgerId(null)} onOpenReceipt={onOpenReceipt} />}
     </Shell>
   );
 }
@@ -655,11 +819,11 @@ function History({ onClose, onOpenReceipt }) {
                   <td colSpan={canSeeCost ? 8 : 7} className="p-2">
                     <div className="space-y-1">
                       {s.items.map((it) => {
-                        const remaining = it.qty - (it.refundedQty || 0);
+                        const remaining = roundQty(it.qty - (it.refundedQty || 0));
                         return (
                           <div key={it.productId} className="flex items-center justify-between rounded bg-pos-panel px-2 py-1">
                             <span>
-                              {it.name} — {remaining}/{it.qty} left{it.refundedQty ? ` (${it.refundedQty} refunded)` : ""}
+                              {it.name} — {fmtQty(remaining)}/{fmtQty(it.qty)} left{it.refundedQty ? ` (${fmtQty(it.refundedQty)} refunded)` : ""}
                             </span>
                             <button
                               type="button"
@@ -668,17 +832,18 @@ function History({ onClose, onOpenReceipt }) {
                                 e.stopPropagation();
                                 const raw = await dialog.prompt({
                                   title: `Refund "${it.name}"`,
-                                  message: `How many to refund? (max ${remaining})`,
+                                  message: `How much to refund? (max ${fmtQty(remaining)})`,
                                   defaultValue: "1",
                                   inputType: "number",
-                                  inputMode: "numeric",
+                                  inputMode: "decimal",
                                   confirmLabel: "Refund",
                                 });
                                 if (raw === null) return;
-                                const n = Math.min(remaining, Math.max(1, Math.floor(Number(raw)) || 0));
-                                if (n <= 0) return;
+                                const want = roundQty(raw);
+                                if (!(want > 0)) return;
+                                const n = Math.min(remaining, want);
                                 refundSaleItem(s.id, it.productId, n);
-                                showToast(`Refunded ${n} × ${it.name}`);
+                                showToast(`Refunded ${fmtQty(n)} × ${it.name}`);
                               }}
                               className="rounded bg-pos-red px-2 py-0.5 text-[11px] text-white disabled:opacity-30"
                             >
@@ -1231,7 +1396,7 @@ export default function Modules({ active, onClose, onOpenReceipt }) {
   if (active === "history") return <History onClose={onClose} onOpenReceipt={onOpenReceipt} />;
   if (!isOwner) return null;
   if (active === "inventory") return <Inventory onClose={onClose} />;
-  if (active === "debt") return <Debt onClose={onClose} />;
+  if (active === "debt") return <Debt onClose={onClose} onOpenReceipt={onOpenReceipt} />;
   if (active === "purchases") return <Purchases onClose={onClose} />;
   if (active === "suppliers") return <Suppliers onClose={onClose} />;
   if (active === "expenses") return <Expenses onClose={onClose} />;

@@ -27,7 +27,7 @@ const path = require("path");
 // Collections kept in the app's state (loaded at start, saved as deltas).
 const COLLECTIONS = [
   "categories", "products", "customers", "sales", "heldSales", "shifts",
-  "suppliers", "purchases", "batches", "expenses",
+  "suppliers", "purchases", "batches", "expenses", "customerPayments",
 ];
 // Append-only history, written by the app but never loaded into its state.
 // Rows here are never deleted by the app (auditLog is also protected by triggers).
