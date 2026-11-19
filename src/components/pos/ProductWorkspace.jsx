@@ -4,6 +4,7 @@ import {
   ChevronFirst, ChevronLeft, ChevronRight, ChevronLast,
 } from "lucide-react";
 import { usePos, money, discountedPrice } from "../../lib/pos/store";
+import { matchesProduct } from "../../lib/pos/sinhalaSearch";
 
 const PAGE_SIZE = 15;
 
@@ -75,9 +76,8 @@ export default function ProductWorkspace({ searchRef }) {
       if (filter === "barcode") return p.barcode.includes(q);
       if (filter === "code") return p.code.includes(q);
       if (filter === "tag") return p.category.toLowerCase().includes(q);
-      return (
-        p.name.toLowerCase().includes(q) || p.code.includes(q) || p.barcode.includes(q)
-      );
+      // name, search alias, code, barcode, plus Singlish -> Sinhala phonetic matching
+      return matchesProduct(p, q);
     });
   }, [products, query, filter, category]);
 
@@ -118,7 +118,7 @@ export default function ProductWorkspace({ searchRef }) {
               setPage(0);
             }}
             onKeyDown={onSearchKeyDown}
-            placeholder="Search products by name, code or barcode"
+            placeholder="Search by name, English (Singlish), code or barcode"
             className="h-9 w-full rounded-md border border-pos-border bg-pos-tile pl-9 pr-10 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-pos-blue"
           />
           <Keyboard className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />

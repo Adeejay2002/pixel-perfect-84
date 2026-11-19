@@ -3,6 +3,7 @@ import { X, Plus, Trash2, AlertTriangle, Printer } from "lucide-react";
 import { usePos, money, roundQty, fmtQty } from "../../lib/pos/store";
 import { useDialog } from "./Dialog";
 import { daysUntil, estimateBatchStock } from "../../lib/pos/alerts";
+import { matchesProduct, matchScore } from "../../lib/pos/sinhalaSearch";
 
 // Owner-only screens: Suppliers, Goods Received (purchases + expiry) and
 // Expenses. They fill the data the AI assistant needs later (stock alerts,
@@ -91,7 +92,7 @@ export function Suppliers({ onClose }) {
 
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return s ? products.filter((p) => p.name.toLowerCase().includes(s) || String(p.barcode || "").includes(s)) : products;
+    return s ? products.filter((p) => matchesProduct(p, s)) : products;
   }, [products, q]);
 
   return (
@@ -245,8 +246,11 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
     const s = search.trim().toLowerCase();
     if (!s) return [];
     return products
-      .filter((p) => p.name.toLowerCase().includes(s) || String(p.barcode || "") === search.trim() || String(p.code || "") === search.trim())
-      .slice(0, 6);
+      .map((p) => ({ p, score: String(p.barcode || "") === search.trim() || String(p.code || "") === search.trim() ? 99 : matchScore(p, s) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6)
+      .map((x) => x.p);
   }, [products, search]);
 
   const addProductLine = (p) => {

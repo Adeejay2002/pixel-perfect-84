@@ -166,7 +166,7 @@ function Inventory({ onClose }) {
       )}
       <div className="mb-3 flex items-center justify-between rounded-md border border-pos-border bg-pos-tile px-3 py-2">
         <p className="text-[11px] text-muted-foreground">
-          Bulk-add products from a CSV file (columns: name, category, price, cost, stock, barcode, discountPercent).
+          Bulk-add products from a CSV file (columns: name, category, price, cost, stock, barcode, discountPercent, searchAlias / englishName).
         </p>
         <div>
           <input ref={importInputRef} type="file" accept=".csv,text/csv" onChange={handleImportFile} className="hidden" />
@@ -183,7 +183,7 @@ function Inventory({ onClose }) {
       <table className="w-full text-left text-xs">
         <thead className="text-muted-foreground">
           <tr className="border-b border-pos-border">
-            <th className="py-2">Product</th><th>Code</th><th>Category</th><th>Price</th><th>Cost</th>
+            <th className="py-2">Product</th><th>Search Alias (English)</th><th>Code</th><th>Category</th><th>Price</th><th>Cost</th>
             <th>Disc %</th><th>Stock</th><th />
           </tr>
         </thead>
@@ -195,6 +195,14 @@ function Inventory({ onClose }) {
                   value={p.name}
                   onChange={(e) => updateProduct(p.id, { name: e.target.value })}
                   className="w-full rounded bg-pos-tile px-2 py-1 outline-none"
+                />
+              </td>
+              <td>
+                <input
+                  value={p.searchAlias || ""}
+                  onChange={(e) => updateProduct(p.id, { searchAlias: e.target.value })}
+                  placeholder="e.g. yakada iron"
+                  className="w-32 rounded bg-pos-tile px-2 py-1 outline-none placeholder:text-muted-foreground/50"
                 />
               </td>
               <td className="text-muted-foreground">{p.code}</td>
@@ -879,6 +887,7 @@ function Settings({ onClose }) {
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
   const [disc, setDisc] = useState("");
+  const [alias, setAlias] = useState("");
   const [barcode, setBarcode] = useState("");
   const barcodeRef = useRef(null);
   const [logoBusy, setLogoBusy] = useState(false);
@@ -1176,6 +1185,8 @@ function Settings({ onClose }) {
             />
             <input id="add-product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name"
               className="h-9 flex-1 rounded border border-pos-border bg-pos-panel px-3 text-sm text-foreground outline-none" />
+            <input value={alias} onChange={(e) => setAlias(e.target.value)} placeholder="Search keywords (English)"
+              className="h-9 w-48 rounded border border-pos-border bg-pos-panel px-3 text-sm text-foreground outline-none" />
             <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price"
               className="h-9 w-28 rounded border border-pos-border bg-pos-panel px-3 text-sm text-foreground outline-none" />
             <input value={cost} onChange={(e) => setCost(e.target.value)} placeholder="Cost"
@@ -1209,8 +1220,9 @@ function Settings({ onClose }) {
                   category: productCategory || "Uncategorized",
                   code: String(Date.now()).slice(-4),
                   barcode: trimmedBarcode || String(Date.now()),
+                  searchAlias: alias.trim(),
                 });
-                setName(""); setPrice(""); setCost(""); setDisc(""); setBarcode("");
+                setName(""); setPrice(""); setCost(""); setDisc(""); setBarcode(""); setAlias("");
                 barcodeRef.current?.focus();
                 showToast("Product added");
               }}

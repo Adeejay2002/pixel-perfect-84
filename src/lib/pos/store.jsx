@@ -102,7 +102,7 @@ function migrate(parsed) {
       : SEED_CATEGORIES.map((c) => ({ ...c }));
   }
   // supplier link + reorder level feed the stock alerts / supplier shopping list
-  next.products = (next.products || []).map((p) => ({ discountPercent: 0, supplierId: null, reorderLevel: 0, ...p }));
+  next.products = (next.products || []).map((p) => ({ discountPercent: 0, supplierId: null, reorderLevel: 0, searchAlias: "", ...p }));
   for (const key of ["suppliers", "purchases", "batches", "expenses", "customerPayments"]) {
     next[key] = Array.isArray(next[key]) ? next[key] : [];
   }
@@ -783,7 +783,7 @@ export function PosProvider({ children }) {
     setDb((d) => ({ ...d, products: d.products.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
   }, []);
   const addProduct = useCallback((product) => {
-    setDb((d) => ({ ...d, products: [...d.products, { id: newId("p"), modifiers: false, discountPercent: 0, ...product }] }));
+    setDb((d) => ({ ...d, products: [...d.products, { id: newId("p"), modifiers: false, discountPercent: 0, searchAlias: "", ...product }] }));
   }, []);
   const removeProduct = useCallback((id) => {
     setDb((d) => ({ ...d, products: d.products.filter((p) => p.id !== id) }));
@@ -861,6 +861,7 @@ export function PosProvider({ children }) {
           barcode,
           code: String(Date.now() + i).slice(-4),
           modifiers: false,
+          searchAlias: String(r.searchalias ?? r.englishname ?? r.searchAlias ?? r.englishName ?? "").trim(),
         });
       });
       return toAdd.length ? { ...d, products: [...d.products, ...toAdd] } : d;
