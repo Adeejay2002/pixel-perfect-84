@@ -1,123 +1,91 @@
 import { useEffect } from "react";
 import { X, Printer } from "lucide-react";
-import { usePos, money, fmtQty } from "../../lib/pos/store";
-import { RECEIPT_FOOTER } from "../../lib/pos/config";
+import { usePos, money } from "../../lib/pos/store";
 
-// Buying voucher: what the shop pays a person who sells scrap / goods to it.
-function VoucherBody({ voucher }) {
-  const c = voucher.currency || "Rs";
-  const shop = voucher.shop || {};
-  return (
-    <div id="pos-receipt" className="mx-auto w-[300px] bg-white p-4 font-mono text-[11px] leading-tight text-black">
-      <div className="text-center">
-        {shop.logo && <img src={shop.logo} alt="" className="mx-auto mb-1 max-h-12 max-w-[140px] object-contain" />}
-        <p className="text-sm font-bold uppercase">{shop.name || "Shop"}</p>
-        {shop.address && <p>{shop.address}</p>}
-        {shop.phone && <p>Tel: {shop.phone}</p>}
-        <p className="mt-1 text-xs font-bold">BUYING VOUCHER</p>
-      </div>
-      <div className="my-2 border-t border-dashed border-black" />
-      <div className="flex justify-between">
-        <span>Voucher #{voucher.saleNo}</span>
-        <span>{new Date(voucher.date).toLocaleString()}</span>
-      </div>
-      <p>Collector / Supplier: {voucher.supplierName}</p>
-      {voucher.cashierName && <p>Received by: {voucher.cashierName}</p>}
-      <div className="my-2 border-t border-dashed border-black" />
-      {(voucher.items || []).map((i, idx) => (
-        <div key={idx} className="mb-1">
-          <p>{i.name}</p>
-          <div className="flex justify-between">
-            <span>{fmtQty(i.qty)} kg x {(i.unitPrice / 100).toFixed(2)}</span>
-            <span>{(i.lineTotal / 100).toFixed(2)}</span>
-          </div>
-        </div>
-      ))}
-      <div className="my-2 border-t border-dashed border-black" />
-      <div className="mt-1 flex justify-between border-t border-black pt-1 text-sm font-bold">
-        <span>TOTAL PAID</span><span>{money(voucher.total, c)}</span>
-      </div>
-      <div className="mt-6 flex justify-between text-[10px]">
-        <span>Seller sign: ________</span><span>Cashier: ________</span>
-      </div>
-      <p className="mt-2 text-center">Thank you!</p>
-      <p className="mt-1 text-center text-[8px] font-normal text-gray-500">{RECEIPT_FOOTER}</p>
-    </div>
-  );
-}
+// Minimalist thermal receipt, same layout as the printed one (customer bills and supplier vouchers):
+// RECEIPT INV-n / party name / YYYY/MM/DD, Item | QTY | Rs table (no unit price), TOTAL, thank-you footer.
+const fmt2 = (cents) =>
+  ((Number(cents) || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ymd = (d) => {
+  const t = new Date(d);
+  return `${t.getFullYear()}/${String(t.getMonth() + 1).padStart(2, "0")}/${String(t.getDate()).padStart(2, "0")}`;
+};
 
 export function ReceiptBody({ sale }) {
-  if (sale.kind === "voucher") return <VoucherBody voucher={sale} />;
+  const isVoucher = sale.kind === "voucher";
   const c = sale.currency || "Rs";
   const shop = sale.shop || {};
+  let party = String((isVoucher ? sale.supplierName : sale.customerName) || "").trim();
+  if (/^walk-?\s?in/i.test(party)) party = "";
+  const discount = (Number(sale.productDiscount) || 0) + (Number(sale.billDiscount) || 0);
+  const tax = Number(sale.tax) || 0;
+  const change = !isVoucher && sale.method === "Cash" ? Math.max(0, (Number(sale.tendered) || 0) - (Number(sale.total) || 0)) : 0;
+  const rule = "border-b border-black";
   return (
-    <div id="pos-receipt" className="mx-auto w-[300px] bg-white p-4 font-mono text-[11px] leading-tight text-black">
-      <div className="text-center">
-        {shop.logo && (
-          <img src={shop.logo} alt="" className="mx-auto mb-1 max-h-12 max-w-[140px] object-contain" />
-        )}
-        <p className="text-sm font-bold uppercase">{shop.name || "Shop"}</p>
-        {shop.address && <p>{shop.address}</p>}
-        {shop.phone && <p>Tel: {shop.phone}</p>}
+    <div id="pos-receipt" className="mx-auto w-[300px] bg-white p-4 font-serif text-[13px] font-bold leading-snug text-black">
+      <div className="space-y-1 text-center">
+        <p>RECEIPT INV-{sale.saleNo}</p>
+        {party && <p>{party}</p>}
+        <p>{ymd(sale.date)}</p>
+        {sale.refunded && <p>** REFUNDED **</p>}
       </div>
-      <div className="my-2 border-t border-dashed border-black" />
-      <div className="flex justify-between">
-        <span>Bill #{sale.saleNo}</span>
-        <span>{new Date(sale.date).toLocaleString()}</span>
-      </div>
-      <p>Payment: {sale.method}</p>
-      {sale.cashierName && <p>Served by: {sale.cashierName}</p>}
-      {sale.comment && <p>Note: {sale.comment}</p>}
-
-      {sale.refunded && <p className="font-bold">** REFUNDED **</p>}
-      <div className="my-2 border-t border-dashed border-black" />
-      {(sale.items || []).map((i, idx) => (
-        <div key={idx} className="mb-1">
-          <p>{i.name}</p>
-          <div className="flex justify-between">
-            <span>Qty: {fmtQty(i.qty)}</span>
-            <span>{(i.lineTotal / 100).toFixed(2)}</span>
-          </div>
-        </div>
-      ))}
-      <div className="my-2 border-t border-dashed border-black" />
-      <div className="flex justify-between"><span>Subtotal</span><span>{money(sale.subtotal, c)}</span></div>
-      {sale.productDiscount > 0 && (
-        <div className="flex justify-between"><span>Product discounts</span><span>-{money(sale.productDiscount, c)}</span></div>
+      <table className="mt-3 w-full border-t border-black">
+        <thead>
+          <tr className={rule}>
+            <th className="py-1 text-left">Item</th>
+            <th className="py-1 text-right">QTY</th>
+            <th className="py-1 text-right">{c}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(sale.items || []).map((i, idx) => (
+            <tr key={idx} className={rule}>
+              <td className="w-[46%] break-words py-1 pr-1">{i.name}</td>
+              <td className="whitespace-nowrap py-1 text-right">{(Math.round((Number(i.qty) || 0) * 1000) / 1000).toFixed(2)}</td>
+              <td className="whitespace-nowrap py-1 pl-2 text-right">{fmt2(i.lineTotal)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {!isVoucher && discount > 0 && (
+        <div className="flex justify-between pt-1"><span>Discount</span><span>-{fmt2(discount)}</span></div>
       )}
-      {sale.billDiscount > 0 && (
-        <div className="flex justify-between">
-          <span>Bill discount ({sale.billDiscountPercent}%)</span><span>-{money(sale.billDiscount, c)}</span>
-        </div>
+      {!isVoucher && tax > 0 && (
+        <div className="flex justify-between pt-1"><span>Tax</span><span>{fmt2(tax)}</span></div>
       )}
-      <div className="flex justify-between"><span>Tax</span><span>{money(sale.tax, c)}</span></div>
-      <div className="mt-1 flex justify-between border-t border-black pt-1 text-sm font-bold">
-        <span>TOTAL</span><span>{money(sale.total, c)}</span>
-      </div>
-      {sale.method === "Cash" && sale.tendered > 0 && (
+      <div className="flex justify-between py-1 text-[15px]"><span>TOTAL</span><span>{fmt2(sale.total)}</span></div>
+      {change > 0 && (
         <>
-          <div className="flex justify-between"><span>Cash</span><span>{money(sale.tendered, c)}</span></div>
-          <div className="flex justify-between"><span>Change</span><span>{money(Math.max(0, sale.tendered - sale.total), c)}</span></div>
+          <div className="flex justify-between text-[12px]"><span>Cash</span><span>{fmt2(sale.tendered)}</span></div>
+          <div className="flex justify-between text-[12px]"><span>Change</span><span>{fmt2(change)}</span></div>
         </>
       )}
-      <div className="my-2 border-t border-dashed border-black" />
-      <p className="text-center">Thank you for your purchase!</p>
-      <p className="mt-1 text-center text-[8px] font-normal text-gray-500">{RECEIPT_FOOTER}</p>
+      <div className="mt-2 space-y-1 text-center">
+        <p>Thanks for your support! {shop.name}</p>
+        {shop.phone && <p>{shop.phone}</p>}
+        <p className="text-[8px] font-normal text-gray-500">Powered by Jnex Software Solution</p>
+      </div>
     </div>
   );
 }
 
 export default function ReceiptModal({ sale, onClose }) {
-  const { canSeeCost, showToast } = usePos();
+  const { canSeeCost, showToast, customers } = usePos();
   const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
 
   // Desktop app: use the same silent printer path as the automatic print after
   // payment (window.print() goes through Chromium's own print path, which gives
   // garbage on some thermal printers). Browser: normal window.print().
+  // older bills only stored the customer id: look the name up so reprints show it too
+  const shown =
+    sale && sale.kind !== "voucher" && !sale.customerName && sale.customerId
+      ? { ...sale, customerName: customers?.find((x) => x.id === sale.customerId)?.name || "" }
+      : sale;
+
   const printNow = async () => {
     if (!desktopPrint) return window.print();
     try {
-      const r = await desktopPrint(sale);
+      const r = await desktopPrint(shown);
       if (r && !r.ok) showToast(`Print failed${r.error ? ` — ${r.error}` : ""}`, "error");
     } catch (err) {
       showToast(`Print failed — ${String((err && err.message) || err)}`, "error");
@@ -152,7 +120,7 @@ export default function ReceiptModal({ sale, onClose }) {
           </button>
         </div>
         <div className="flex-1 overflow-auto bg-pos-bg p-4">
-          <ReceiptBody sale={sale} />
+          <ReceiptBody sale={shown} />
           {canSeeCost && sale.kind !== "voucher" && (
             <p className="mt-3 text-center text-[11px] text-muted-foreground">
               Cost {money(sale.cost || 0, sale.currency)} · Profit {money(sale.profit || 0, sale.currency)}

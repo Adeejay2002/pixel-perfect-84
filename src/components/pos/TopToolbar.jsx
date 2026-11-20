@@ -5,6 +5,7 @@ import {
 import { usePos } from "../../lib/pos/store";
 import { ROLE_LABEL } from "../../lib/pos/config";
 import ThemeToggle from "./ThemeToggle";
+import ModeToggle from "./ModeToggle";
 import { useTicketActions } from "./ticketActions";
 
 function TBtn({ icon: Icon, label, onClick, tone = "neutral", badge, onBadgeClick, title }) {
@@ -39,17 +40,18 @@ function TBtn({ icon: Icon, label, onClick, tone = "neutral", badge, onBadgeClic
 export default function TopToolbar({ onPayment, onTransfer, onCustomer, onAlerts, onMenu, onFocusSearch, onHistory, onHeld }) {
   const {
     session, lockScreen, heldSales, holdSale, newSale, comment, openCashDrawer,
-    billDiscountAvailable, billDiscountOn, toggleBillDiscount, settings, stockAlerts,
+    billDiscountAvailable, billDiscountOn, toggleBillDiscount, settings, stockAlerts, posMode,
   } = usePos();
   const { editComment } = useTicketActions();
   const who = ROLE_LABEL[session?.role] || "User";
 
   return (
     <header className="flex h-16 w-full shrink-0 items-center gap-0.5 border-b border-pos-border bg-pos-panel px-2">
+      <ModeToggle className="mr-2" />
       <TBtn icon={Search} label="Search" onClick={onFocusSearch} />
-      <TBtn icon={User} label="Customer" onClick={onCustomer} />
+      {posMode === "customer" && <TBtn icon={User} label="Customer" onClick={onCustomer} />}
       <TBtn icon={ArrowLeftRight} label="F7 Transfer" onClick={onTransfer} />
-      {billDiscountAvailable && (
+      {billDiscountAvailable && posMode === "customer" && (
         <TBtn
           icon={Percent}
           label={`Discount ${settings.billDiscountPercent}%`}

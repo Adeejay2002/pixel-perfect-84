@@ -4,16 +4,28 @@ import { usePos, money, fmtQty } from "../../lib/pos/store";
 import { useTicketActions } from "./ticketActions";
 import { useDialog } from "./Dialog";
 import QuantityModal from "./QuantityModal";
+import ModeToggle from "./ModeToggle";
 
 export default function TicketPanel() {
   const {
-    saleNo, lines, totals, settings, customers, customerId, setCustomerId,
+    saleNo, lines, totals, settings, customers, customerId, setCustomerId, posMode, suppliers = [], supplierId, setSupplierId, addSupplier,
     setLineStatus, setLineQty, updateLinePrice, showToast, lockScreen, comment,
     billDiscountAvailable, billDiscountOn, toggleBillDiscount,
   } = usePos();
   const c = settings.currency;
   const { editComment, voidWithReason } = useTicketActions();
   const dialog = useDialog();
+  const buying = posMode === "supplier";
+
+  const newSupplier = async () => {
+    const name = await dialog.prompt({ title: "New supplier", message: "Supplier name", placeholder: "Name", confirmLabel: "Add supplier" });
+    if (name === null) return;
+    const row = addSupplier({ name });
+    if (!row) return showToast("Supplier name is required", "error");
+    setSupplierId(row.id);
+    showToast(`${row.name} added`);
+    return undefined;
+  };
   const [qtyLineId, setQtyLineId] = useState(null);
 
   // negotiated price for this bill only (the product's own price is not changed)
@@ -39,10 +51,44 @@ export default function TicketPanel() {
   return (
     <aside className="flex w-[35%] min-w-[340px] flex-col border-l border-pos-border bg-pos-panel">
       <div className="flex items-center justify-between border-b border-pos-border px-3 py-2.5">
-        <span className="text-sm font-semibold text-foreground">Sale #{saleNo}</span>
+        <span className="text-sm font-semibold text-foreground">{buying ? "Supplier purchase" : `Sale #${saleNo}`}</span>
         <span className="text-[11px] text-muted-foreground">{new Date().toLocaleDateString()}</span>
       </div>
+      <div className="border-b border-pos-border px-3 py-2">
+        <ModeToggle className="w-full [&>button]:flex-1" />
+      </div>
+      {buying && (
+        <div className="bg-pos-amber px-3 py-1 text-center text-[11px] font-bold tracking-wide text-black">
+          SUPPLIER BUYING MODE
+        </div>
+      )}
+      {buying && (
+        <div className="flex items-center gap-2 border-b border-pos-border px-3 py-2">
+          <User size={15} className="shrink-0 text-muted-foreground" />
+          <select
+            value={supplierId || ""}
+            onChange={(e) => setSupplierId(e.target.value || null)}
+            className="h-8 min-w-0 flex-1 rounded border border-pos-border bg-pos-tile px-2 text-xs text-foreground outline-none"
+          >
+            <option value="">No supplier (walk-in seller)</option>
+            {suppliers.map((sp) => (
+              <option key={sp.id} value={sp.id}>
+                {sp.name}
+                {sp.balance > 0 ? ` · we owe ${money(sp.balance, c)}` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={newSupplier}
+            className="h-8 shrink-0 rounded bg-pos-green px-2 text-[11px] font-semibold text-black hover:brightness-110"
+          >
+            + New Supplier
+          </button>
+        </div>
+      )}
 
+      {!buying && (
       <div className="flex items-center gap-2 border-b border-pos-border px-3 py-2">
         <User size={15} className="shrink-0 text-muted-foreground" />
         <select
@@ -58,6 +104,7 @@ export default function TicketPanel() {
           ))}
         </select>
       </div>
+      )}
       {comment && (
         <button
           type="button"

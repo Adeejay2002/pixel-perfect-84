@@ -71,9 +71,205 @@ function Tabs({ tabs, value, onChange }) {
 // Suppliers
 // ---------------------------------------------------------------------------
 
+// Receipt / voucher for a saved purchase: prints straight away in the desktop app,
+// opens the preview (with a Print button) in a browser.
+function useVoucherPrinter() {
+  const { settings, setReceipt, showToast, suppliers = [], products, purchases = [] } = usePos();
+  const voucherNoById = useMemo(() => {
+    const asc = [...purchases].sort((x, y) => String(x.date).localeCompare(String(y.date)));
+    return new Map(asc.map((pu, i) => [pu.id, pu.voucherNo ?? i + 1]));
+  }, [purchases]);
+
+  const printVoucher = async (pu) => {
+    const voucher = {
+      kind: "voucher",
+      id: pu.id,
+      saleNo: voucherNoById.get(pu.id),
+      date: pu.date,
+      supplierName: suppliers.find((x) => x.id === pu.supplierId)?.name || pu.supplierName || "",
+      cashierName: pu.by || "",
+      method: pu.method || "Cash",
+      currency: settings.currency,
+      shop: { name: settings.shopName, address: settings.shopAddress, phone: settings.shopPhone, logo: settings.shopLogo || "" },
+      items: pu.items.map((i) => ({
+        name: products.find((p) => p.id === i.productId)?.name || "Item",
+        qty: i.qty,
+        price: i.cost,
+        unitPrice: i.cost,
+        lineTotal: Math.round(i.qty * i.cost),
+      })),
+      total: pu.total,
+    };
+    const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
+    if (!desktopPrint) return setReceipt(voucher);
+    try {
+      const r = await desktopPrint(voucher);
+      if (r && !r.ok) showToast(`Print failed${r.error ? ` — ${r.error}` : ""}`, "error");
+      else showToast("Receipt sent to the printer");
+    } catch (err) {
+      showToast(`Print failed — ${String((err && err.message) || err)}`, "error");
+    }
+    return undefined;
+  };
+  return { printVoucher, voucherNoById };
+}
+
+// What we owe one supplier: balance, part payments, every purchase and every payment.
+function SupplierLedger({ supplierId, onClose }) {
+  const { suppliers, purchases = [], supplierPayments = [], recordSupplierPayment, settings, showToast, products } = usePos();
+  const { printVoucher, voucherNoById } = useVoucherPrinter();
+  const cur = settings.currency;
+  const sup = suppliers.find((x) => x.id === supplierId);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [method, setMethod] = useState("Cash");
+  const bills = useMemo(
+    () => purchases.filter((x) => x.supplierId === supplierId).slice().sort((x, y) => String(y.date).localeCompare(String(x.date))),
+    [purchases, supplierId],
+  );
+  const pays = useMemo(
+    () => supplierPayments.filter((x) => x.supplierId === supplierId).slice().reverse(),
+    [supplierPayments, supplierId],
+  );
+  if (!sup) return null;
+  const owed = sup.balance || 0;
+  const totalPaid = pays.reduce((a, x) => a + (x.amount || 0), 0);
+
+  const submit = () => {
+    const rupees = Number(amount);
+    if (!Number.isFinite(rupees) || rupees <= 0) return showToast("Enter the payment amount", "error");
+    const cents = Math.round(rupees * 100);
+    if (cents > owed) return showToast(`That is more than the balance (${money(owed, cur)})`, "error");
+    const row = recordSupplierPayment(sup.id, cents, note, method);
+    if (!row) return showToast("Could not record the payment", "error");
+    showToast(`${money(cents, cur)} paid · balance now ${money(row.balanceAfter, cur)}`);
+    setAmount("");
+    setNote("");
+    return undefined;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+      <div className="flex h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-pos-border bg-pos-panel">
+        <div className="flex items-center justify-between border-b border-pos-border px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Supplier ledger · {sup.name}</h2>
+            <p className="text-[11px] text-muted-foreground">{sup.phone || "No phone"}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 space-y-4 overflow-auto p-4">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-3 rounded-md border border-pos-border bg-pos-tile px-4 py-3 sm:col-span-1">
+              <p className="text-[11px] uppercase text-muted-foreground">Unpaid balance (we owe)</p>
+              <p className={`text-2xl font-bold ${owed > 0 ? "text-pos-red" : "text-pos-green"}`}>{money(owed, cur)}</p>
+            </div>
+            <div className="rounded-md border border-pos-border bg-pos-tile px-4 py-3">
+              <p className="text-[11px] uppercase text-muted-foreground">Purchases</p>
+              <p className="text-lg font-bold text-foreground">{bills.length}</p>
+            </div>
+            <div className="rounded-md border border-pos-border bg-pos-tile px-4 py-3">
+              <p className="text-[11px] uppercase text-muted-foreground">Paid back so far</p>
+              <p className="text-lg font-bold text-foreground">{money(totalPaid, cur)}</p>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-pos-border bg-pos-tile p-3">
+            <p className="mb-2 text-xs font-semibold text-foreground">Record a payment to this supplier</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="w-36">
+                <label className={label}>Amount ({cur})</label>
+                <input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submit()} placeholder="e.g. 15000" className={input} />
+              </div>
+              <div className="w-36">
+                <label className={label}>Paid by</label>
+                <select value={method} onChange={(e) => setMethod(e.target.value)} className={input}>
+                  <option>Cash</option><option>Bank Transfer</option><option>Check</option>
+                </select>
+              </div>
+              <div className="min-w-[160px] flex-1">
+                <label className={label}>Note (optional)</label>
+                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. part payment" className={`${input} w-full`} />
+              </div>
+              <button type="button" onClick={() => setAmount(String(owed / 100))} disabled={owed <= 0} className="h-9 rounded bg-pos-panel px-3 text-xs font-semibold text-foreground hover:bg-pos-hover disabled:opacity-40">
+                Full balance
+              </button>
+              <button type="button" onClick={submit} disabled={owed <= 0} className="h-9 rounded bg-pos-green px-4 text-xs font-semibold text-black disabled:opacity-40">
+                Record Payment
+              </button>
+            </div>
+            {amount !== "" && Number(amount) > 0 && Math.round(Number(amount) * 100) <= owed && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Balance after this payment: <span className="font-semibold text-foreground">{money(owed - Math.round(Number(amount) * 100), cur)}</span>
+              </p>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-foreground">Purchase history</p>
+            <table className="w-full text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-pos-border"><th className="py-2">Voucher</th><th>Date</th><th>Paid by</th><th>Items</th><th className="text-right">Total</th><th /></tr>
+              </thead>
+              <tbody>
+                {bills.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">No purchases from this supplier yet</td></tr>}
+                {bills.map((pu) => (
+                  <tr key={pu.id} className="border-b border-pos-border align-top text-foreground">
+                    <td className="py-2">INV-{voucherNoById.get(pu.id)}</td>
+                    <td className="whitespace-nowrap text-muted-foreground">{shortDate(pu.date)}</td>
+                    <td>
+                      <span className={pu.method === "Account" ? "font-semibold text-pos-red" : "text-muted-foreground"}>
+                        {pu.method === "Account" ? "Credit" : pu.method || "Goods received"}
+                      </span>
+                    </td>
+                    <td className="max-w-[260px] text-muted-foreground">
+                      {pu.items.map((i) => `${products.find((p) => p.id === i.productId)?.name || "Item"} ×${fmtQty(i.qty)}`).join(", ")}
+                    </td>
+                    <td className="text-right font-semibold">{money(pu.total, cur)}</td>
+                    <td className="pl-2 text-right">
+                      <button type="button" onClick={() => printVoucher(pu)} className="whitespace-nowrap rounded bg-pos-panel px-2 py-1 text-[11px] text-foreground hover:bg-pos-hover">
+                        View / Print
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-foreground">Payment history</p>
+            <table className="w-full text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-pos-border"><th className="py-2">Date</th><th>Paid by</th><th>Note</th><th className="text-right">Paid</th><th className="text-right">Balance after</th></tr>
+              </thead>
+              <tbody>
+                {pays.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">No payments recorded yet</td></tr>}
+                {pays.map((x) => (
+                  <tr key={x.id} className="border-b border-pos-border text-foreground">
+                    <td className="py-2 text-muted-foreground">{new Date(x.date).toLocaleString()}</td>
+                    <td>{x.method || "Cash"}</td>
+                    <td className="text-muted-foreground">{x.note || "—"}</td>
+                    <td className="text-right font-semibold text-pos-green">{money(x.amount, cur)}</td>
+                    <td className="text-right">{money(x.balanceAfter ?? 0, cur)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Suppliers({ onClose }) {
-  const { suppliers = [], products, addSupplier, updateSupplier, removeSupplier, updateProduct, showToast } = usePos();
+  const { suppliers = [], products, addSupplier, updateSupplier, removeSupplier, updateProduct, showToast, settings } = usePos();
   const dialog = useDialog();
+  const [ledgerId, setLedgerId] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", note: "" });
   const [q, setQ] = useState("");
 
@@ -124,6 +320,13 @@ export function Suppliers({ onClose }) {
               <input value={s.name} onChange={(e) => updateSupplier(s.id, { name: e.target.value })} className={`${cell} w-48 font-semibold`} />
               <input value={s.phone || ""} onChange={(e) => updateSupplier(s.id, { phone: e.target.value })} placeholder="Phone" className={`${cell} w-36`} />
               <input value={s.note || ""} onChange={(e) => updateSupplier(s.id, { note: e.target.value })} placeholder="Note" className={`${cell} min-w-[140px] flex-1`} />
+              <button
+                type="button"
+                onClick={() => setLedgerId(s.id)}
+                className={`rounded px-2 py-1 text-[11px] font-semibold hover:bg-pos-hover ${(s.balance || 0) > 0 ? "bg-pos-panel text-pos-red" : "bg-pos-panel text-foreground"}`}
+              >
+                Ledger{(s.balance || 0) > 0 ? ` · we owe ${money(s.balance, settings.currency)}` : ""}
+              </button>
               <span className="text-[11px] text-muted-foreground">{linked.get(s.id) || 0} product(s)</span>
               <button
                 type="button"
@@ -198,6 +401,7 @@ export function Suppliers({ onClose }) {
           })}
         </tbody>
       </table>
+      {ledgerId && <SupplierLedger supplierId={ledgerId} onClose={() => setLedgerId(null)} />}
     </Shell>
   );
 }
@@ -399,46 +603,9 @@ function NewPurchase({ products, suppliers, cur, receivePurchase, showToast }) {
 }
 
 function PurchaseHistory({ purchases, productById, supplierById, cur }) {
-  const { settings, setReceipt, showToast } = usePos();
+  const { printVoucher, voucherNoById } = useVoucherPrinter();
   const [open, setOpen] = useState(null);
-  const list = useMemo(() => [...purchases].sort((a, b) => String(b.date).localeCompare(String(a.date))), [purchases]);
-  // running number for purchases saved without a supplier invoice number
-  const voucherNoById = useMemo(() => {
-    const asc = [...purchases].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    return new Map(asc.map((pu, i) => [pu.id, `BV-${String(i + 1).padStart(4, "0")}`]));
-  }, [purchases]);
-
-  // Thermal voucher handed to the person selling scrap to the shop.
-  const printVoucher = async (pu) => {
-    const voucher = {
-      kind: "voucher",
-      id: pu.id,
-      saleNo: pu.invoiceNo || voucherNoById.get(pu.id),
-      date: pu.date,
-      supplierName: supplierById.get(pu.supplierId)?.name || "Walk-in seller",
-      cashierName: pu.by || "",
-      method: "Cash",
-      currency: settings.currency,
-      shop: { name: settings.shopName, address: settings.shopAddress, phone: settings.shopPhone, logo: settings.shopLogo || "" },
-      items: pu.items.map((i) => ({
-        name: productById.get(i.productId)?.name || "Item",
-        qty: i.qty,
-        unitPrice: i.cost,
-        lineTotal: Math.round(i.qty * i.cost),
-      })),
-      total: pu.total,
-    };
-    const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
-    if (!desktopPrint) return setReceipt(voucher); // browser: preview with a Print button
-    try {
-      const r = await desktopPrint(voucher);
-      if (r && !r.ok) showToast(`Print failed${r.error ? ` — ${r.error}` : ""}`, "error");
-      else showToast("Buying voucher sent to the printer");
-    } catch (err) {
-      showToast(`Print failed — ${String((err && err.message) || err)}`, "error");
-    }
-    return undefined;
-  };
+  const list = useMemo(() => [...purchases].sort((x, y) => String(y.date).localeCompare(String(x.date))), [purchases]);
   if (!list.length) return <p className="p-6 text-center text-xs text-muted-foreground">No purchases recorded yet.</p>;
   return (
     <div className="space-y-2">
@@ -449,10 +616,10 @@ function PurchaseHistory({ purchases, productById, supplierById, cur }) {
               <div>
                 <p className="text-sm font-semibold text-foreground">
                   {supplierById.get(pu.supplierId)?.name || "No supplier"}
-                  {pu.invoiceNo ? ` · #${pu.invoiceNo}` : ` · ${voucherNoById.get(pu.id)}`}
+                  {pu.invoiceNo ? ` · #${pu.invoiceNo}` : ` · INV-${voucherNoById.get(pu.id)}`}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {shortDate(pu.date)} · {pu.items.length} item(s){pu.by ? ` · ${pu.by}` : ""}
+                  {shortDate(pu.date)} · {pu.items.length} item(s){pu.method ? ` · ${pu.method === "Account" ? "Credit" : pu.method}` : ""}{pu.by ? ` · ${pu.by}` : ""}
                 </p>
               </div>
               <span className="text-sm font-bold text-foreground">{money(pu.total, cur)}</span>

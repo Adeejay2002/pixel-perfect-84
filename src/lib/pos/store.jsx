@@ -48,6 +48,7 @@ const defaultState = () => ({
   batches: [],
   expenses: [],
   customerPayments: [],
+  supplierPayments: [],
   nextSaleNo: 1042,
   shift: null,
   shifts: [],
@@ -66,6 +67,7 @@ export const blankState = () => ({
   batches: [],
   expenses: [],
   customerPayments: [],
+  supplierPayments: [],
   nextSaleNo: 1001,
   shift: null,
   shifts: [],
@@ -103,7 +105,7 @@ function migrate(parsed) {
   }
   // supplier link + reorder level feed the stock alerts / supplier shopping list
   next.products = (next.products || []).map((p) => ({ discountPercent: 0, supplierId: null, reorderLevel: 0, searchAlias: "", ...p }));
-  for (const key of ["suppliers", "purchases", "batches", "expenses", "customerPayments"]) {
+  for (const key of ["suppliers", "purchases", "batches", "expenses", "customerPayments", "supplierPayments"]) {
     next[key] = Array.isArray(next[key]) ? next[key] : [];
   }
   // legacy seeded data stored prices in plain rupees while money() expects cents.
@@ -187,6 +189,9 @@ export function PosProvider({ children }) {
   }, []);
   const [lines, setLines] = useState([]);
   const [customerId, setCustomerId] = useState("cu1");
+  // "customer" = selling over the counter, "supplier" = buying goods / scrap from a supplier
+  const [posMode, setPosModeState] = useState("customer");
+  const [supplierId, setSupplierId] = useState(null);
   const [comment, setComment] = useState(""); // note on the current ticket (saved with the sale, printed on the receipt)
   const [billDiscountOn, setBillDiscountOn] = useState(false);
   const [toast, setToast] = useState(null);
@@ -308,8 +313,9 @@ export function PosProvider({ children }) {
 
   // ---- cart --------------------------------------------------------------
   const addLine = useCallback((product) => {
+    const buying = posMode === "supplier";
     // soft warning only: the sale is not blocked (the date may be wrong in the system)
-    if (stockAlertsRef.current.byProduct.get(product.id)?.expiry === "expired") {
+    if (!buying && stockAlertsRef.current.byProduct.get(product.id)?.expiry === "expired") {
       showToast(`${product.name}: expired stock on record. Check the date before selling.`, "error");
     }
     setLines((prev) => {
@@ -323,9 +329,10 @@ export function PosProvider({ children }) {
           id: `l${Date.now()}${Math.random().toString(16).slice(2, 6)}`,
           productId: product.id,
           name: product.name,
-          price: product.price,
-          discountPercent: Number(product.discountPercent || 0),
-          unitPrice: discountedPrice(product),
+          // supplier (buy) mode: the line is priced at the buying rate (cost)
+          price: buying ? product.cost || 0 : product.price,
+          discountPercent: buying ? 0 : Number(product.discountPercent || 0),
+          unitPrice: buying ? product.cost || 0 : discountedPrice(product),
           cost: product.cost || 0,
           qty: 1,
           status: "new", // new | confirmed | void
@@ -333,7 +340,7 @@ export function PosProvider({ children }) {
         },
       ];
     });
-  }, [showToast]);
+  }, [showToast, posMode]);
 
   const addLineByCode = useCallback(
     (code) => {
@@ -398,16 +405,19 @@ export function PosProvider({ children }) {
     const active = lines.filter((l) => l.status !== "void");
     // every line is rounded to whole cents on its own, so decimal kg never leaves fractions
     const gross = active.reduce((s, l) => s + Math.round(l.price * l.qty), 0);
-    const productDiscount = active.reduce(
-      (s, l) => s + (Math.round(l.price * l.qty) - Math.round((l.unitPrice ?? l.price) * l.qty)),
-      0,
-    );
+    const buying = posMode === "supplier";
+    const productDiscount = buying
+      ? 0
+      : active.reduce(
+          (s, l) => s + (Math.round(l.price * l.qty) - Math.round((l.unitPrice ?? l.price) * l.qty)),
+          0,
+        );
     const afterProduct = gross - productDiscount;
     const pct = Number(db.settings.billDiscountPercent || 0);
-    const billApplied = billDiscountOn && db.settings.billDiscountEnabled;
+    const billApplied = !buying && billDiscountOn && db.settings.billDiscountEnabled;
     const billDiscount = billApplied ? Math.round((afterProduct * pct) / 100) : 0;
     const net = afterProduct - billDiscount;
-    const tax = Math.round(net * (db.settings.taxRate || 0));
+    const tax = buying ? 0 : Math.round(net * (db.settings.taxRate || 0));
     return {
       subtotal: gross,
       productDiscount,
@@ -417,7 +427,7 @@ export function PosProvider({ children }) {
       tax,
       total: net + tax,
     };
-  }, [lines, db.settings.taxRate, db.settings.billDiscountEnabled, db.settings.billDiscountPercent, billDiscountOn]);
+  }, [lines, db.settings.taxRate, db.settings.billDiscountEnabled, db.settings.billDiscountPercent, billDiscountOn, posMode]);
 
   const holdSale = useCallback(() => {
     if (!lines.length) {
@@ -433,6 +443,8 @@ export function PosProvider({ children }) {
           saleNo,
           lines,
           customerId,
+          mode: posMode,
+          supplierId,
           billDiscountOn,
           comment,
           cashierName: operatorName,
@@ -445,7 +457,17 @@ export function PosProvider({ children }) {
     setBillDiscountOn(false);
     setComment("");
     showToast("Sale parked in Held Sales");
-  }, [lines, saleNo, customerId, billDiscountOn, comment, operatorName, showToast]);
+  }, [lines, saleNo, customerId, posMode, supplierId, billDiscountOn, comment, operatorName, showToast]);
+
+  const switchPosMode = useCallback((mode) => {
+    if (mode !== "customer" && mode !== "supplier") return;
+    setLines([]);
+    setBillDiscountOn(false);
+    setComment("");
+    setSupplierId(null);
+    setCustomerId("cu1");
+    setPosModeState(mode);
+  }, []);
 
   const resumeHeld = useCallback((id) => {
     setDb((d) => {
@@ -453,6 +475,8 @@ export function PosProvider({ children }) {
       if (!held) return d;
       setLines(held.lines || []);
       setCustomerId(held.customerId || "cu1");
+      setPosModeState(held.mode || "customer");
+      setSupplierId(held.supplierId || null);
       setBillDiscountOn(!!held.billDiscountOn);
       setComment(held.comment || "");
       return { ...d, heldSales: d.heldSales.filter((h) => h.id !== id) };
@@ -507,8 +531,99 @@ export function PosProvider({ children }) {
     showToast("Order voided");
   }, [lines, saleNo, operatorName, showToast]);
 
+  // Supplier (buy) mode checkout: saved in purchases (never in sales), stock goes UP.
+  // method: "Cash" | "Bank Transfer" | "Account" (credit: we owe the supplier).
+  const completeSupplierPurchase = useCallback(
+    (method) => {
+      const active = lines.filter((l) => l.status !== "void");
+      if (!active.length) {
+        showToast("Ticket is empty", "error");
+        return null;
+      }
+      const supplier = (db.suppliers || []).find((x) => x.id === supplierId) || null;
+      if (method === "Account" && !supplier) {
+        showToast("Select a supplier to buy on credit", "error");
+        return null;
+      }
+      const items = active.map((l) => {
+        const qty = roundQty(l.qty);
+        const cost = Math.round(l.unitPrice ?? l.price);
+        return { productId: l.productId, name: l.name, qty, cost, lineTotal: Math.round(qty * cost) };
+      });
+      const total = items.reduce((a, i) => a + i.lineTotal, 0);
+      const prev = db.purchases || [];
+      const voucherNo = Math.max(prev.length, ...prev.map((x) => Number(x.voucherNo) || 0)) + 1;
+      const date = new Date().toISOString();
+      const row = {
+        id: newId("pu"),
+        date,
+        supplierId: supplier?.id || null,
+        supplierName: supplier?.name || "",
+        invoiceNo: "",
+        voucherNo,
+        method,
+        paid: method === "Account" ? 0 : total,
+        shiftId: db.shift?.id || null,
+        items: items.map(({ productId, qty, cost }) => ({ productId, qty, cost, expiry: null })),
+        total,
+        by: operatorName,
+      };
+      const qtyBy = new Map();
+      const costBy = new Map();
+      items.forEach((i) => {
+        qtyBy.set(i.productId, roundQty((qtyBy.get(i.productId) || 0) + i.qty));
+        if (i.cost > 0) costBy.set(i.productId, i.cost);
+      });
+      setDb((d) => ({
+        ...d,
+        purchases: [...(d.purchases || []), row],
+        suppliers:
+          method === "Account" && supplier
+            ? (d.suppliers || []).map((x) => (x.id === supplier.id ? { ...x, balance: (x.balance || 0) + total } : x))
+            : d.suppliers,
+        products: d.products.map((p) => {
+          const q = qtyBy.get(p.id);
+          if (!q) return p;
+          return { ...p, stock: roundQty((p.stock || 0) + q), ...(costBy.has(p.id) ? { cost: costBy.get(p.id) } : {}) };
+        }),
+      }));
+      const voucher = {
+        kind: "voucher",
+        id: row.id,
+        saleNo: voucherNo,
+        date,
+        supplierName: row.supplierName,
+        cashierName: operatorName,
+        method,
+        currency: db.settings.currency,
+        shop: {
+          name: db.settings.shopName,
+          address: db.settings.shopAddress,
+          phone: db.settings.shopPhone,
+          logo: db.settings.shopLogo || "",
+        },
+        items: items.map((i) => ({ name: i.name, qty: i.qty, price: i.cost, unitPrice: i.cost, lineTotal: i.lineTotal })),
+        total,
+      };
+      const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
+      if (desktopPrint) Promise.resolve(desktopPrint(voucher)).catch(() => {});
+      setLines([]);
+      setComment("");
+      setSupplierId(null);
+      if (!desktopPrint || db.settings.receiptScreenAfterSale === true) setReceipt(voucher);
+      showToast(
+        method === "Account"
+          ? `Bought on credit from ${supplier.name}`
+          : `Purchase recorded · ${method}`,
+      );
+      return voucher;
+    },
+    [lines, db.suppliers, db.purchases, db.settings, db.shift, supplierId, showToast, operatorName],
+  );
+
   const completeSale = useCallback(
     (method, tendered) => {
+      if (posMode === "supplier") return completeSupplierPurchase(method);
       const active = lines.filter((l) => l.status !== "void");
       if (!active.length) {
         showToast("Ticket is empty", "error");
@@ -611,7 +726,7 @@ export function PosProvider({ children }) {
       );
       return payload;
     },
-    [lines, db.customers, db.settings, db.shift, saleNo, customerId, totals, comment, showToast, operatorName, role],
+    [lines, db.customers, db.settings, db.shift, saleNo, customerId, totals, comment, showToast, operatorName, role, posMode, completeSupplierPurchase],
   );
 
   const refundSale = useCallback((id) => {
@@ -727,9 +842,14 @@ export function PosProvider({ children }) {
     const debtCash = (db.customerPayments || [])
       .filter((p) => p.shiftId === shift.id && p.method === "Cash")
       .reduce((a, p) => a + (p.amount || 0), 0);
+    // cash paid out for supplier purchases / supplier payments leaves the drawer
+    const buyCash =
+      (db.purchases || []).filter((p) => p.shiftId === shift.id && p.method === "Cash").reduce((a, p) => a + (p.total || 0), 0) +
+      (db.supplierPayments || []).filter((p) => p.shiftId === shift.id && p.method === "Cash").reduce((a, p) => a + (p.amount || 0), 0);
     return {
       ...shift,
       debtCash,
+      buyCash,
       bills: inShift.length,
       sales: inShift.reduce((a, s) => a + (s.total || 0), 0),
       cash,
@@ -737,9 +857,9 @@ export function PosProvider({ children }) {
       account,
       other,
       refunds,
-      expectedCash: shift.openingFloat + cash + debtCash - refunds,
+      expectedCash: shift.openingFloat + cash + debtCash - refunds - buyCash,
     };
-  }, [db.shift, db.sales, db.customerPayments]);
+  }, [db.shift, db.sales, db.customerPayments, db.purchases, db.supplierPayments]);
 
   const closeShift = useCallback((actualCash) => {
     const actual = Math.round(Number(actualCash) || 0);
@@ -751,7 +871,10 @@ export function PosProvider({ children }) {
       const debtCash = (d.customerPayments || [])
         .filter((p) => p.shiftId === d.shift.id && p.method === "Cash")
         .reduce((a, p) => a + (p.amount || 0), 0);
-      const expected = d.shift.openingFloat + cash + debtCash - refunds;
+      const buyCash =
+        (d.purchases || []).filter((p) => p.shiftId === d.shift.id && p.method === "Cash").reduce((a, p) => a + (p.total || 0), 0) +
+        (d.supplierPayments || []).filter((p) => p.shiftId === d.shift.id && p.method === "Cash").reduce((a, p) => a + (p.amount || 0), 0);
+      const expected = d.shift.openingFloat + cash + debtCash - refunds - buyCash;
       return {
         ...d,
         shift: null,
@@ -824,6 +947,39 @@ export function PosProvider({ children }) {
   const settleDebt = useCallback(
     (id, amount) => recordCustomerPayment(id, amount, "Settled in full"),
     [recordCustomerPayment],
+  );
+
+  // We pay a supplier part or all of what we owe them. amount in cents.
+  const recordSupplierPayment = useCallback(
+    (id, amount, note = "", method = "Cash") => {
+      const cents = Math.round(Number(amount));
+      if (!Number.isFinite(cents) || cents <= 0) return null;
+      const cur = dbRef.current;
+      const sup = (cur.suppliers || []).find((x) => x.id === id);
+      if (!sup) return null;
+      const owed = sup.balance || 0;
+      if (cents > owed) return null;
+      const saved = {
+        id: newId("sp"),
+        supplierId: id,
+        supplierName: sup.name,
+        amount: cents,
+        balanceBefore: owed,
+        balanceAfter: owed - cents,
+        note: String(note || "").trim(),
+        method,
+        shiftId: cur.shift?.id || null,
+        by: operatorName,
+        date: new Date().toISOString(),
+      };
+      setDb((d) => ({
+        ...d,
+        suppliers: (d.suppliers || []).map((x) => (x.id === id ? { ...x, balance: Math.max(0, (x.balance || 0) - cents) } : x)),
+        supplierPayments: [...(d.supplierPayments || []), saved],
+      }));
+      return saved;
+    },
+    [operatorName],
   );
   const addCustomer = useCallback((name, phone) => {
     const trimmedName = String(name || "").trim();
@@ -1010,7 +1166,7 @@ export function PosProvider({ children }) {
   const addSupplier = useCallback((supplier) => {
     const name = String(supplier?.name || "").trim();
     if (!name) return null;
-    const row = { id: newId("sup"), name, phone: String(supplier.phone || "").trim(), note: String(supplier.note || "").trim() };
+    const row = { id: newId("sup"), name, phone: String(supplier.phone || "").trim(), note: String(supplier.note || "").trim(), balance: 0 };
     setDb((d) => ({ ...d, suppliers: [...(d.suppliers || []), row] }));
     return row;
   }, []);
@@ -1057,6 +1213,8 @@ export function PosProvider({ children }) {
       date: new Date().toISOString(),
       supplierId: purchase.supplierId || null,
       invoiceNo: String(purchase.invoiceNo || "").trim(),
+      voucherNo:
+        Math.max((dbRef.current.purchases || []).length, ...(dbRef.current.purchases || []).map((x) => Number(x.voucherNo) || 0)) + 1,
       items,
       total: items.reduce((sum, i) => sum + Math.round(i.qty * i.cost), 0),
       by: operatorName,
@@ -1167,6 +1325,12 @@ export function PosProvider({ children }) {
     removeProduct,
     settleDebt,
     recordCustomerPayment,
+    recordSupplierPayment,
+    supplierPayments: db.supplierPayments || [],
+    posMode,
+    switchPosMode,
+    supplierId,
+    setSupplierId,
     customerPayments: db.customerPayments || [],
     addCustomer,
     bulkAddProducts,

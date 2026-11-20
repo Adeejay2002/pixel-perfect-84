@@ -4,7 +4,7 @@ import { useDialog } from "./Dialog";
 
 // Ticket actions shared by the toolbar, the ticket panel and the payment screen.
 export function useTicketActions() {
-  const { comment, setComment, lines, voidOrder, showToast } = usePos();
+  const { comment, setComment, lines, voidOrder, showToast, posMode, switchPosMode } = usePos();
   const dialog = useDialog();
 
   // Note on the current ticket; saved with the sale and printed on the receipt.
@@ -37,5 +37,24 @@ export function useTicketActions() {
     return true;
   }, [dialog, lines, voidOrder]);
 
-  return { editComment, voidWithReason };
+  // Customer (Sell) <-> Supplier (Buy). A ticket with items is cleared first (after asking)
+  // so selling and buying lines can never mix.
+  const requestPosMode = useCallback(
+    async (mode) => {
+      if (mode === posMode) return;
+      if (lines.length) {
+        const ok = await dialog.confirm({
+          title: `Switch to ${mode === "supplier" ? "Supplier (Buy)" : "Customer (Sell)"} mode?`,
+          message: "The current ticket will be cleared so selling and buying lines never mix.",
+          confirmLabel: "Clear ticket & switch",
+          danger: true,
+        });
+        if (!ok) return;
+      }
+      switchPosMode(mode);
+    },
+    [dialog, lines, posMode, switchPosMode],
+  );
+
+  return { editComment, voidWithReason, requestPosMode };
 }

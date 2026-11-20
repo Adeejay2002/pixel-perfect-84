@@ -20,7 +20,7 @@ function Btn({ children, tone = "neutral", onClick, className = "" }) {
 export default function PaymentModal({ open, onClose, initialMethod = "Cash", onSearch, onQuantity }) {
   const {
     lines, totals, settings, completeSale, newSale, holdSale, showToast,
-    billDiscountAvailable, billDiscountOn, toggleBillDiscount, customerId, customers,
+    billDiscountAvailable, billDiscountOn, toggleBillDiscount, customerId, customers, posMode, suppliers, supplierId,
     lockScreen, openCashDrawer, comment,
   } = usePos();
   const { editComment, voidWithReason } = useTicketActions();
@@ -63,23 +63,29 @@ export default function PaymentModal({ open, onClose, initialMethod = "Cash", on
   const tenderedCents = Math.round((parseFloat(tendered || "0") || 0) * 100);
   const change = tenderedCents - totals.total;
 
+  const buying = posMode === "supplier"; // Supplier (Buy) mode: we pay the supplier
   const selectedCustomer = customers?.find((c) => c.id === customerId);
-  const isWalkIn = !selectedCustomer || selectedCustomer.name === "Walk-in";
+  const selectedSupplier = (suppliers || []).find((x) => x.id === supplierId);
+  const isWalkIn = buying ? !selectedSupplier : !selectedCustomer || selectedCustomer.name === "Walk-in";
+  const methods = buying
+    ? ["Cash", "Bank Transfer", "Account"]
+    : ["Cash", "Credit Card", "Debit Card", "Check", "Bank Transfer", "Account"];
+  const effMethod = methods.includes(method) ? method : "Cash";
 
   const confirm = () => {
     if (!lines.length) {
       showToast("Ticket is empty", "error");
       return;
     }
-    if (method === "Cash" && tenderedCents < totals.total) {
+    if (!buying && effMethod === "Cash" && tenderedCents < totals.total) {
       showToast("Insufficient cash tendered", "error");
       return;
     }
-    if (method === "Account" && isWalkIn) {
-      showToast("Pick a real customer (not Walk-in) to sell on account", "error");
+    if (effMethod === "Account" && isWalkIn) {
+      showToast(buying ? "Pick a supplier to buy on credit" : "Pick a real customer (not Walk-in) to sell on account", "error");
       return;
     }
-    completeSale(method, tenderedCents);
+    completeSale(effMethod, buying ? 0 : tenderedCents);
     setTendered("");
     onClose();
   };
@@ -142,27 +148,29 @@ export default function PaymentModal({ open, onClose, initialMethod = "Cash", on
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            {["Cash", "Credit Card", "Debit Card", "Check", "Bank Transfer", "Account"].map((m) => (
+            {methods.map((m) => (
               <button
                 key={m}
                 type="button"
                 onClick={() => setMethod(m)}
                 disabled={m === "Account" && isWalkIn}
                 className={`h-20 rounded-md text-sm font-semibold transition-colors disabled:opacity-30 ${
-                  method === m ? "bg-pos-blue text-white" : "bg-pos-tile text-foreground hover:bg-pos-hover"
+                  effMethod === m ? "bg-pos-blue text-white" : "bg-pos-tile text-foreground hover:bg-pos-hover"
                 }`}
               >
-                {m === "Cash" ? "F12 Cash" : m === "Bank Transfer" ? "F7 Bank Transfer" : m === "Account" ? "Account (on credit)" : m}
+                {m === "Cash" ? "F12 Cash" : m === "Bank Transfer" ? "F7 Bank Transfer" : m === "Account" ? (buying ? "Credit (we owe supplier)" : "Account (on credit)") : m}
               </button>
             ))}
           </div>
-          {method === "Account" && !isWalkIn && (
+          {effMethod === "Account" && !isWalkIn && (
             <p className="text-[11px] text-pos-amber">
-              {selectedCustomer.name}'s account balance will increase by {money(totals.total, c)}.
+              {buying
+                ? `We will owe ${selectedSupplier.name} ${money(totals.total, c)} more.`
+                : `${selectedCustomer.name}'s account balance will increase by ${money(totals.total, c)}.`}
             </p>
           )}
 
-          {method === "Cash" && (
+          {!buying && effMethod === "Cash" && (
             <div className="rounded-md border border-pos-border bg-pos-tile p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div>

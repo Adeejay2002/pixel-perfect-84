@@ -95,10 +95,24 @@ function lr(left, right, width) {
 
 const fmtQty = (n) => String(Math.round((Number(n) || 0) * 1000) / 1000);
 
+const commaMoney = (cents) =>
+  ((Number(cents) || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const qty2 = (n) => (Math.round((Number(n) || 0) * 1000) / 1000).toFixed(2);
+const ymd = (d) => {
+  const t = new Date(d);
+  return `${t.getFullYear()}/${String(t.getMonth() + 1).padStart(2, "0")}/${String(t.getDate()).padStart(2, "0")}`;
+};
+const rpad = (t, w) => " ".repeat(Math.max(0, w - t.length)) + t;
+
+// Same layout as the HTML receipt: header, Item | QTY | Rs table, TOTAL, thank-you footer.
+// (Plain ESC/POS text can only print ASCII, so Sinhala item names need the Windows
+// driver / HTML print mode.)
 function buildTextJob(sale, paperWidthMm, { feedLines = 4, cut = true } = {}) {
   const isVoucher = sale.kind === "voucher";
   const cols = paperWidthMm === 58 ? 32 : 48;
-  const money = (c) => ((Number(c) || 0) / 100).toFixed(2);
+  const wAmt = cols === 32 ? 10 : 12;
+  const wQty = cols === 32 ? 7 : 9;
+  const wItem = cols - wAmt - wQty - 2;
   const cur = ascii(sale.currency || "Rs");
   const shop = sale.shop || {};
   const out = [];
@@ -108,69 +122,48 @@ function buildTextJob(sale, paperWidthMm, { feedLines = 4, cut = true } = {}) {
   const align = (n) => raw(0x1b, 0x61, n); // 0 left, 1 centre
   const bold = (on) => raw(0x1b, 0x45, on ? 1 : 0);
 
+  let party = String((isVoucher ? sale.supplierName : sale.customerName) || "").trim();
+  if (/^walk-?\s?in/i.test(party)) party = "";
+
   raw(0x1b, 0x40); // initialise
   raw(0x1b, 0x74, 0); // code page 0 (PC437), ASCII only is sent
   align(1);
   bold(true);
-  for (const l of wrap(String(shop.name || "Shop").toUpperCase(), cols)) text(l);
+  text("RECEIPT INV-" + ascii(sale.saleNo));
+  if (party) for (const l of wrap(party, cols)) text(l);
+  text(ymd(sale.date));
+  if (sale.refunded) text("** REFUNDED **");
   bold(false);
-  if (shop.address) for (const l of wrap(shop.address, cols)) text(l);
-  if (shop.phone) text("Tel: " + ascii(shop.phone));
-  if (isVoucher) {
-    bold(true);
-    text("BUYING VOUCHER");
-    bold(false);
-  }
   align(0);
+
   sep();
-  text(lr((isVoucher ? "Voucher #" : "Bill #") + ascii(sale.saleNo), new Date(sale.date).toLocaleString("en-GB"), cols));
-  if (isVoucher) {
-    for (const l of wrap("Collector / Supplier: " + sale.supplierName, cols)) text(l);
-    if (sale.cashierName) text("Received by: " + ascii(sale.cashierName));
-  } else {
-    text("Payment: " + ascii(sale.method));
-    if (sale.cashierName) text("Served by: " + ascii(sale.cashierName));
-    if (sale.comment) for (const l of wrap("Note: " + sale.comment, cols)) text(l);
-    if (sale.refunded) text("** REFUNDED **");
-  }
+  text(ascii("Item").padEnd(wItem) + " " + rpad("QTY", wQty) + " " + rpad(cur, wAmt));
   sep();
-  // Sales receipt: name, quantity and line total only (no unit price).
-  // Buying voucher: also the cost rate paid per kg.
   for (const i of sale.items || []) {
-    for (const l of wrap(i.name, cols)) text(l);
-    const left = isVoucher ? `${fmtQty(i.qty)} kg x ${money(i.unitPrice)}` : `Qty: ${fmtQty(i.qty)}`;
-    text(lr(left, money(i.lineTotal), cols));
-  }
-  sep();
-  if (isVoucher) {
-    bold(true);
-    text(lr("TOTAL PAID", `${cur} ${money(sale.total)}`, cols));
-    bold(false);
-    text("");
-    text(lr("Seller sign: ______", "Cashier: ______", cols));
+    const lines = wrap(i.name, wItem);
+    lines.forEach((l, idx) => {
+      if (idx === 0) text(l.padEnd(wItem) + " " + rpad(qty2(i.qty), wQty) + " " + rpad(commaMoney(i.lineTotal), wAmt));
+      else text(l);
+    });
     sep();
-    align(1);
-    text("Thank you!");
-    text("Powered by Jnex Software Solution");
-    align(0);
-    raw(0x1b, 0x64, feedLines);
-    if (cut) raw(0x1d, 0x56, 0x01);
-    return Buffer.concat(out);
   }
-  text(lr("Subtotal", `${cur} ${money(sale.subtotal)}`, cols));
-  if (sale.productDiscount > 0) text(lr("Product discounts", `-${cur} ${money(sale.productDiscount)}`, cols));
-  if (sale.billDiscount > 0) text(lr(`Bill discount (${sale.billDiscountPercent}%)`, `-${cur} ${money(sale.billDiscount)}`, cols));
-  text(lr("Tax", `${cur} ${money(sale.tax)}`, cols));
+  const discount = (Number(sale.productDiscount) || 0) + (Number(sale.billDiscount) || 0);
+  if (!isVoucher && discount > 0) text(lr("Discount", "-" + commaMoney(discount), cols));
+  if (!isVoucher && Number(sale.tax) > 0) text(lr("Tax", commaMoney(sale.tax), cols));
   bold(true);
-  text(lr("TOTAL", `${cur} ${money(sale.total)}`, cols));
+  text(lr("TOTAL", commaMoney(sale.total), cols));
   bold(false);
-  if (sale.method === "Cash" && sale.tendered > 0) {
-    text(lr("Cash", `${cur} ${money(sale.tendered)}`, cols));
-    text(lr("Change", `${cur} ${money(Math.max(0, sale.tendered - sale.total))}`, cols));
+  const change = !isVoucher && sale.method === "Cash" ? Math.max(0, (Number(sale.tendered) || 0) - (Number(sale.total) || 0)) : 0;
+  if (change > 0) {
+    text(lr("Cash", commaMoney(sale.tendered), cols));
+    text(lr("Change", commaMoney(change), cols));
   }
-  sep();
+  text("");
   align(1);
-  text("Thank you for your purchase!");
+  bold(true);
+  for (const l of wrap("Thanks for your support! " + (shop.name || ""), cols)) text(l);
+  if (shop.phone) text(ascii(shop.phone));
+  bold(false);
   text("Powered by Jnex Software Solution");
   align(0);
   raw(0x1b, 0x64, feedLines);

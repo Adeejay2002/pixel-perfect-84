@@ -41,7 +41,7 @@ function StockBadges({ info, stock }) {
 }
 
 export default function ProductWorkspace({ searchRef }) {
-  const { products, addLine, addLineByCode, settings, categories, stockAlerts } = usePos();
+  const { products, addLine, addLineByCode, settings, categories, stockAlerts, posMode } = usePos();
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState(null);
@@ -176,10 +176,16 @@ export default function ProductWorkspace({ searchRef }) {
               </div>
               <span className="line-clamp-2 text-center text-xs font-medium text-foreground">{t.name}</span>
               <span className="mt-1 flex items-center justify-center gap-1 text-center text-[11px]">
-                {t.discountPercent > 0 && (
-                  <span className="text-muted-foreground line-through">{money(t.price, settings.currency)}</span>
+                {posMode === "supplier" ? (
+                  <span className="text-pos-amber">Buy {money(t.cost || 0, settings.currency)}</span>
+                ) : (
+                  <>
+                    {t.discountPercent > 0 && (
+                      <span className="text-muted-foreground line-through">{money(t.price, settings.currency)}</span>
+                    )}
+                    <span className="text-pos-green">{money(discountedPrice(t), settings.currency)}</span>
+                  </>
                 )}
-                <span className="text-pos-green">{money(discountedPrice(t), settings.currency)}</span>
               </span>
 
             </button>
