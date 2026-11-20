@@ -100,6 +100,7 @@ const commaMoney = (cents) =>
 const qty2 = (n) => (Math.round((Number(n) || 0) * 1000) / 1000).toFixed(2);
 const ymd = (d) => {
   const t = new Date(d);
+  if (Number.isNaN(t.getTime())) return "";
   return `${t.getFullYear()}/${String(t.getMonth() + 1).padStart(2, "0")}/${String(t.getDate()).padStart(2, "0")}`;
 };
 const rpad = (t, w) => " ".repeat(Math.max(0, w - t.length)) + t;
@@ -108,6 +109,7 @@ const rpad = (t, w) => " ".repeat(Math.max(0, w - t.length)) + t;
 // (Plain ESC/POS text can only print ASCII, so Sinhala item names need the Windows
 // driver / HTML print mode.)
 function buildTextJob(sale, paperWidthMm, { feedLines = 4, cut = true } = {}) {
+  sale = sale || {};
   const isVoucher = sale.kind === "voucher";
   const cols = paperWidthMm === 58 ? 32 : 48;
   const wAmt = cols === 32 ? 10 : 12;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound } from "lucide-react";
+import { KeyRound, DatabaseBackup } from "lucide-react";
 import { APP_NAME, BRAND_FOOTER } from "../../lib/pos/config";
 
 // Wraps the whole POS. While the licence is expired, only the activation
@@ -15,14 +15,27 @@ function ActivationScreen({ status, onActivated }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState("");
+
+  const backup = async () => {
+    setBackupMsg("");
+    try {
+      const r = await window.posLicense.backup();
+      if (r.ok) setBackupMsg(`Backup saved: ${r.folder}`);
+      else if (!r.canceled) setBackupMsg(`Backup failed${r.error ? ` — ${r.error}` : ""}`);
+    } catch {
+      setBackupMsg("Backup failed.");
+    }
+  };
 
   const submit = async () => {
-    if (busy || code.replace(/-/g, "").length < 16) return;
+    if (busy || code.replace(/-/g, "").length < 8) return;
     setBusy(true);
     setError("");
     try {
       const res = await window.posLicense.activate(code);
       if (res.ok) onActivated(res.status);
+      else if (res.reason === "used_today") setError("The temporary key was already used today. Try again tomorrow.");
       else if (res.reason === "blocked") setError("Too many wrong attempts. Wait a minute and try again.");
       else if (res.reason === "exhausted") setError("No more activation codes available. Please contact Jnex support.");
       else setError("Invalid activation key.");
@@ -60,11 +73,20 @@ function ActivationScreen({ status, onActivated }) {
         <button
           type="button"
           onClick={submit}
-          disabled={busy || code.replace(/-/g, "").length < 16}
+          disabled={busy || code.replace(/-/g, "").length < 8}
           className="h-12 w-full rounded-md bg-pos-green text-base font-semibold text-black transition hover:brightness-110 disabled:opacity-40"
         >
           {busy ? "Checking…" : "Activate"}
         </button>
+
+        <button
+          type="button"
+          onClick={backup}
+          className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-pos-tile text-xs font-semibold text-foreground hover:bg-pos-hover"
+        >
+          <DatabaseBackup size={14} /> Save a full backup of my data
+        </button>
+        {backupMsg && <p className="mt-2 break-all text-center text-[11px] text-muted-foreground">{backupMsg}</p>}
 
         <div className="mt-5 space-y-2 text-center text-xs">
           {error && <p className="text-pos-red">{error}</p>}
@@ -106,10 +128,16 @@ export default function LicenseGate({ children }) {
   if (status.locked) return <ActivationScreen status={status} onActivated={setStatus} />;
 
   const daysLeft = Math.ceil(status.remainingMs / 86400000);
+  const minsLeft = Math.ceil(status.remainingMs / 60000);
   return (
     <>
       {children}
-      {daysLeft <= 2 && (
+      {status.temp && (
+        <div className="pos-no-print pointer-events-none fixed bottom-2 left-2 z-[70] rounded bg-pos-amber px-2 py-1 text-[11px] font-semibold text-black">
+          Temporary access: {minsLeft} min left. Save your work.
+        </div>
+      )}
+      {!status.temp && daysLeft <= 2 && (
         <div className="pos-no-print pointer-events-none fixed bottom-2 left-2 z-[70] rounded bg-pos-tile/90 px-2 py-1 text-[11px] text-muted-foreground">
           {status.trial ? "Trial" : "Licence"} ends in {daysLeft} day{daysLeft === 1 ? "" : "s"}
         </div>

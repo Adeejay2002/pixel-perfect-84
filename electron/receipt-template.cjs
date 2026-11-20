@@ -32,6 +32,7 @@ const fmtQty2 = (n) => (Math.round((Number(n) || 0) * 1000) / 1000).toFixed(2);
 const pad2 = (n) => String(n).padStart(2, "0");
 const fmtDate = (d) => {
   const t = new Date(d);
+  if (Number.isNaN(t.getTime())) return "";
   return `${t.getFullYear()}/${pad2(t.getMonth() + 1)}/${pad2(t.getDate())}`;
 };
 // name line: customer (sell) or supplier (buy); hidden for walk-in / nobody
@@ -41,6 +42,7 @@ const partyName = (sale) => {
 };
 
 function buildReceiptHtml(sale, paperWidthMM = 80) {
+  sale = sale || {};
   const isVoucher = sale.kind === "voucher";
   const c = sale.currency || "Rs";
   const shop = sale.shop || {};
@@ -53,8 +55,8 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
       (i) => `
       <tr>
         <td class="item">${esc(i.name)}</td>
-        <td class="num">${fmtQty2(i.qty)}</td>
-        <td class="num">${fmtMoney(i.lineTotal)}</td>
+        <td class="num n">${fmtQty2(i.qty)}</td>
+        <td class="num n">${fmtMoney(i.lineTotal)}</td>
       </tr>`,
     )
     .join("");
@@ -63,14 +65,14 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
   const extraRows = [];
   if (!isVoucher && discount > 0) extraRows.push(["Discount", `-${fmtMoney(discount)}`]);
   if (!isVoucher && Number(sale.tax) > 0) extraRows.push(["Tax", fmtMoney(sale.tax)]);
-  const extra = extraRows.map(([l, v]) => `<div class="row"><span>${l}</span><span>${v}</span></div>`).join("");
+  const extra = extraRows.map(([l, v]) => `<div class="row"><span>${l}</span><span class="n">${v}</span></div>`).join("");
 
   // cash / change only when the customer actually got change back
   const change = !isVoucher && sale.method === "Cash" ? Math.max(0, (Number(sale.tendered) || 0) - (Number(sale.total) || 0)) : 0;
   const changeBlock =
     change > 0
-      ? `<div class="row small"><span>Cash</span><span>${fmtMoney(sale.tendered)}</span></div>
-         <div class="row small"><span>Change</span><span>${fmtMoney(change)}</span></div>`
+      ? `<div class="row small"><span>Cash</span><span class="n">${fmtMoney(sale.tendered)}</span></div>
+         <div class="row small"><span>Change</span><span class="n">${fmtMoney(change)}</span></div>`
       : "";
 
   return `<!doctype html>
@@ -101,6 +103,8 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
   td.item { word-break: break-word; overflow-wrap: anywhere; width: 46%; }
   .row { display: flex; justify-content: space-between; padding: 2px 2px 0; }
   .small { font-size: 90%; }
+  /* numbers use the same monospace font as the previous bill layout */
+  .n { font-family: "Courier New", Courier, monospace; font-weight: 700; }
   .total { display: flex; justify-content: space-between; padding: 4px 2px 2px; font-size: 115%; }
   .foot { margin-top: 6px; }
   .foot p { margin: 0 0 4px; }
@@ -109,9 +113,9 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
 </head>
 <body>
   <div class="center head">
-    <p>RECEIPT INV-${esc(sale.saleNo)}</p>
+    <p>RECEIPT INV-<span class="n">${esc(sale.saleNo)}</span></p>
     ${party ? `<p>${esc(party)}</p>` : ""}
-    <p>${fmtDate(sale.date)}</p>
+    <p class="n">${fmtDate(sale.date)}</p>
     ${sale.refunded ? `<p>** REFUNDED **</p>` : ""}
   </div>
   <table>
@@ -119,11 +123,11 @@ function buildReceiptHtml(sale, paperWidthMM = 80) {
     <tbody>${itemRows}</tbody>
   </table>
   ${extra}
-  <div class="total"><span>TOTAL</span><span>${fmtMoney(sale.total)}</span></div>
+  <div class="total"><span>TOTAL</span><span class="n">${fmtMoney(sale.total)}</span></div>
   ${changeBlock}
   <div class="center foot">
     <p>Thanks for your support! ${esc(shop.name || "")}</p>
-    ${shop.phone ? `<p>${esc(shop.phone)}</p>` : ""}
+    ${shop.phone ? `<p class="n">${esc(shop.phone)}</p>` : ""}
     <p class="powered">Powered by Jnex Software Solution</p>
   </div>
 </body>

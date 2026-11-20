@@ -4,7 +4,7 @@ import { X, AlertTriangle, Download, Upload, Trash2, Undo2, UserPlus, Plus, Imag
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { usePos, money, roundQty, fmtQty } from "../../lib/pos/store";
 import { hashCode } from "../../lib/pos/config";
-import { Suppliers, Purchases, Expenses } from "./StockModules";
+import { Suppliers, Purchases, Expenses, SupplierLedger } from "./StockModules";
 import { useDialog } from "./Dialog";
 import BackupRestore from "./BackupRestore";
 
@@ -417,8 +417,11 @@ function CustomerLedger({ customerId, onClose, onOpenReceipt }) {
 }
 
 function Debt({ onClose, onOpenReceipt }) {
-  const { customers, settleDebt, addCustomer, settings, showToast, bulkAddCustomers } = usePos();
+  const { customers, settleDebt, addCustomer, settings, showToast, bulkAddCustomers, suppliers = [] } = usePos();
   const [ledgerId, setLedgerId] = useState(null);
+  const [supLedgerId, setSupLedgerId] = useState(null);
+  const payable = suppliers.reduce((a, sp) => a + (sp.balance || 0), 0);
+  const supList = [...suppliers].sort((x, y) => (y.balance || 0) - (x.balance || 0));
   const list = Array.isArray(customers) ? customers.filter((c) => c.name !== "Walk-in") : [];
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -537,9 +540,45 @@ function Debt({ onClose, onOpenReceipt }) {
           ))}
         </div>
       )}
+      <div className="mt-6">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-foreground">Suppliers — we owe</h3>
+          <span className={`text-xs font-bold ${payable > 0 ? "text-pos-red" : "text-pos-green"}`}>
+            Total payable {money(payable, settings.currency)}
+          </span>
+        </div>
+        {supList.length === 0 ? (
+          <p className="rounded-md border border-pos-border bg-pos-tile p-4 text-center text-xs text-muted-foreground">
+            No suppliers yet. Add them from the Suppliers screen or with "+ New Supplier" in Supplier (Buy) mode.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {supList.map((sp) => (
+              <div
+                key={sp.id}
+                onClick={() => setSupLedgerId(sp.id)}
+                title="Open supplier ledger"
+                className="flex cursor-pointer items-center justify-between rounded-md border border-pos-border bg-pos-tile px-4 py-3 hover:bg-pos-hover"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{sp.name}</p>
+                  <p className="text-[11px] text-muted-foreground">{sp.phone || "No phone"}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-sm font-bold ${(sp.balance || 0) > 0 ? "text-pos-red" : "text-pos-green"}`}>
+                    {money(sp.balance || 0, settings.currency)}
+                  </span>
+                  <span className="text-[11px] text-pos-blue">Ledger ›</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <p className="mt-3 text-[11px] text-muted-foreground">
         A customer's debt increases automatically when a sale is completed using the "Account" payment method at checkout. Tap a customer to see their full ledger and record part payments.
       </p>
+      {supLedgerId && <SupplierLedger supplierId={supLedgerId} onClose={() => setSupLedgerId(null)} />}
       {ledgerId && <CustomerLedger customerId={ledgerId} onClose={() => setLedgerId(null)} onOpenReceipt={onOpenReceipt} />}
     </Shell>
   );

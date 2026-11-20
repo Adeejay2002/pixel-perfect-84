@@ -104,10 +104,9 @@ function useVoucherPrinter() {
     if (!desktopPrint) return setReceipt(voucher);
     try {
       const r = await desktopPrint(voucher);
-      if (r && !r.ok) showToast(`Print failed${r.error ? ` — ${r.error}` : ""}`, "error");
-      else showToast("Receipt sent to the printer");
-    } catch (err) {
-      showToast(`Print failed — ${String((err && err.message) || err)}`, "error");
+      if (!r || r.ok) showToast("Receipt sent to the printer");
+    } catch {
+      /* printer problems are reported by the main process, not on the bill */
     }
     return undefined;
   };
@@ -115,7 +114,7 @@ function useVoucherPrinter() {
 }
 
 // What we owe one supplier: balance, part payments, every purchase and every payment.
-function SupplierLedger({ supplierId, onClose }) {
+export function SupplierLedger({ supplierId, onClose }) {
   const { suppliers, purchases = [], supplierPayments = [], recordSupplierPayment, settings, showToast, products } = usePos();
   const { printVoucher, voucherNoById } = useVoucherPrinter();
   const cur = settings.currency;

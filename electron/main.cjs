@@ -426,6 +426,40 @@ ipcMain.handle("license:status", () => {
 });
 ipcMain.handle("license:activate", (_evt, code) => license.activate(code));
 
+// Works even while locked: the customer can always take their data out.
+// Writes a folder jnex-backup-<stamp> with a consistent pos.db snapshot plus
+// the other data files. The licence files are not included.
+ipcMain.handle("license:backup", async () => {
+  try {
+    const pick = await dialog.showOpenDialog({
+      title: "Choose where to save the backup",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (pick.canceled || !pick.filePaths[0]) return { ok: false, canceled: true };
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const dest = path.join(pick.filePaths[0], `jnex-backup-${stamp}`);
+    fs.mkdirSync(dest, { recursive: true });
+    const files = [];
+    if (posDb) {
+      posDb.backupTo(path.join(dest, "pos.db"));
+      files.push("pos.db");
+    }
+    for (const f of ["pos-data.json", "printer-config.json"]) {
+      const src = path.join(app.getPath("userData"), f);
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, path.join(dest, f));
+        files.push(f);
+      }
+    }
+    if (!files.length) return { ok: false, error: "No data found to back up" };
+    return { ok: true, folder: dest, files };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+});
+
 ipcMain.handle("data:load", () => {
   if (license.isLocked()) return null;
   if (!posDb) return readData();

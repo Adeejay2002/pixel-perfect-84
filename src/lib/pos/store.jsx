@@ -606,7 +606,9 @@ export function PosProvider({ children }) {
         total,
       };
       const desktopPrint = typeof window !== "undefined" ? window.posHardware?.printReceipt : null;
-      if (desktopPrint) Promise.resolve(desktopPrint(voucher)).catch(() => {});
+      if (desktopPrint) {
+        try { Promise.resolve(desktopPrint(voucher)).catch(() => {}); } catch { /* handled by the main process */ }
+      }
       setLines([]);
       setComment("");
       setSupplierId(null);
@@ -705,7 +707,7 @@ export function PosProvider({ children }) {
       if (desktopPrint) {
         // never let a printer problem break the sale (the main process already
         // offers the manual print dialog when printing fails)
-        Promise.resolve(desktopPrint(payload)).catch(() => {});
+        try { Promise.resolve(desktopPrint(payload)).catch(() => {}); } catch { /* printer problems are handled by the main process */ }
       }
       setLines([]);
       setBillDiscountOn(false);

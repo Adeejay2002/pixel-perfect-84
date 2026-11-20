@@ -8,10 +8,12 @@ const fmt2 = (cents) =>
   ((Number(cents) || 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const ymd = (d) => {
   const t = new Date(d);
+  if (Number.isNaN(t.getTime())) return "";
   return `${t.getFullYear()}/${String(t.getMonth() + 1).padStart(2, "0")}/${String(t.getDate()).padStart(2, "0")}`;
 };
 
 export function ReceiptBody({ sale }) {
+  sale = sale || {};
   const isVoucher = sale.kind === "voucher";
   const c = sale.currency || "Rs";
   const shop = sale.shop || {};
@@ -24,9 +26,9 @@ export function ReceiptBody({ sale }) {
   return (
     <div id="pos-receipt" className="mx-auto w-[300px] bg-white p-4 font-serif text-[13px] font-bold leading-snug text-black">
       <div className="space-y-1 text-center">
-        <p>RECEIPT INV-{sale.saleNo}</p>
+        <p>RECEIPT INV-<span className="font-mono">{sale.saleNo}</span></p>
         {party && <p>{party}</p>}
-        <p>{ymd(sale.date)}</p>
+        <p className="font-mono">{ymd(sale.date)}</p>
         {sale.refunded && <p>** REFUNDED **</p>}
       </div>
       <table className="mt-3 w-full border-t border-black">
@@ -41,28 +43,28 @@ export function ReceiptBody({ sale }) {
           {(sale.items || []).map((i, idx) => (
             <tr key={idx} className={rule}>
               <td className="w-[46%] break-words py-1 pr-1">{i.name}</td>
-              <td className="whitespace-nowrap py-1 text-right">{(Math.round((Number(i.qty) || 0) * 1000) / 1000).toFixed(2)}</td>
-              <td className="whitespace-nowrap py-1 pl-2 text-right">{fmt2(i.lineTotal)}</td>
+              <td className="whitespace-nowrap py-1 text-right font-mono">{(Math.round((Number(i.qty) || 0) * 1000) / 1000).toFixed(2)}</td>
+              <td className="whitespace-nowrap py-1 pl-2 text-right font-mono">{fmt2(i.lineTotal)}</td>
             </tr>
           ))}
         </tbody>
       </table>
       {!isVoucher && discount > 0 && (
-        <div className="flex justify-between pt-1"><span>Discount</span><span>-{fmt2(discount)}</span></div>
+        <div className="flex justify-between pt-1"><span>Discount</span><span className="font-mono">-{fmt2(discount)}</span></div>
       )}
       {!isVoucher && tax > 0 && (
-        <div className="flex justify-between pt-1"><span>Tax</span><span>{fmt2(tax)}</span></div>
+        <div className="flex justify-between pt-1"><span>Tax</span><span className="font-mono">{fmt2(tax)}</span></div>
       )}
-      <div className="flex justify-between py-1 text-[15px]"><span>TOTAL</span><span>{fmt2(sale.total)}</span></div>
+      <div className="flex justify-between py-1 text-[15px]"><span>TOTAL</span><span className="font-mono">{fmt2(sale.total)}</span></div>
       {change > 0 && (
         <>
-          <div className="flex justify-between text-[12px]"><span>Cash</span><span>{fmt2(sale.tendered)}</span></div>
-          <div className="flex justify-between text-[12px]"><span>Change</span><span>{fmt2(change)}</span></div>
+          <div className="flex justify-between text-[12px]"><span>Cash</span><span className="font-mono">{fmt2(sale.tendered)}</span></div>
+          <div className="flex justify-between text-[12px]"><span>Change</span><span className="font-mono">{fmt2(change)}</span></div>
         </>
       )}
       <div className="mt-2 space-y-1 text-center">
         <p>Thanks for your support! {shop.name}</p>
-        {shop.phone && <p>{shop.phone}</p>}
+        {shop.phone && <p className="font-mono">{shop.phone}</p>}
         <p className="text-[8px] font-normal text-gray-500">Powered by Jnex Software Solution</p>
       </div>
     </div>

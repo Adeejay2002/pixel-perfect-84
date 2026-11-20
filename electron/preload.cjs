@@ -42,4 +42,5 @@ contextBridge.exposeInMainWorld("posBackups", {
 contextBridge.exposeInMainWorld("posLicense", {
   status: () => ipcRenderer.invoke("license:status"),
   activate: (code) => ipcRenderer.invoke("license:activate", code),
+  backup: () => ipcRenderer.invoke("license:backup"),
 });
